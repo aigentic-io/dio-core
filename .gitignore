@@ -1,0 +1,16 @@
+# Environments
+*venv*/
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+SPEAKER_NOTES.md
+aigentic/docs/INTERNAL.md
