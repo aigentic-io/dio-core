@@ -14,12 +14,15 @@ class Provider:
         type: Provider type (e.g., "cloud", "local")
         cost_per_input_token: Cost per input token (for routing decisions)
         cost_per_output_token: Cost per output token (for routing decisions)
+        capability: Model capability level (0.0-1.0, default 1.0). Used by FDE to
+            differentiate providers of the same type (e.g., GPT-4o-mini vs Gemini Flash).
         metadata: Additional provider metadata
     """
     name: str
     type: str
     cost_per_input_token: float = 0.0
     cost_per_output_token: float = 0.0
+    capability: float = 1.0
     metadata: Dict[str, Any] = None
 
     def __post_init__(self):

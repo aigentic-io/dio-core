@@ -11,8 +11,8 @@ from aigentic.core.provider import MockProvider
 from aigentic.core.pii_detector import has_pii
 
 # Setup providers with per-token pricing
-cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.005, cost_per_output_token=0.015)
+cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03, capability=0.9)
+local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.005, cost_per_output_token=0.015, capability=0.5)
 
 # Initialize DIO
 dio = DIO()

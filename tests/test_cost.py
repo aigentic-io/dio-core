@@ -122,3 +122,67 @@ class TestFDECostScoring:
         assert FederatedDecisionEngine._estimate_output_tokens(
             100, ComplexityLevel.COMPLEX
         ) == 300
+
+
+class TestFDECapabilityScoring:
+    """Tests for FDE capability scoring with per-provider capability."""
+
+    def test_capability_differentiates_cloud_providers(self):
+        """Two cloud providers with different capability on complex query: higher wins."""
+        fde = FederatedDecisionEngine()
+
+        strong = Provider(
+            name="strong-cloud",
+            type="cloud",
+            cost_per_input_token=0.0004,
+            cost_per_output_token=0.0008,
+            capability=0.9,
+        )
+        weak = Provider(
+            name="weak-cloud",
+            type="cloud",
+            cost_per_input_token=0.0004,
+            cost_per_output_token=0.0008,
+            capability=0.6,
+        )
+
+        context = RoutingContext(
+            prompt="Explain distributed consensus algorithms",
+            complexity=ComplexityLevel.COMPLEX,
+            estimated_input_tokens=100,
+            estimated_output_tokens=300,
+        )
+
+        strong_score = fde.score_provider(strong, context)
+        weak_score = fde.score_provider(weak, context)
+
+        # Higher capability should yield higher capability_score
+        assert strong_score.capability_score > weak_score.capability_score
+        # And since costs are identical, higher capability should win overall
+        assert strong_score.score > weak_score.score
+
+    def test_capability_default_backward_compat(self):
+        """Provider without explicit capability defaults to 1.0."""
+        provider = Provider(name="default", type="cloud")
+        assert provider.capability == 1.0
+
+    def test_capability_scales_base_score(self):
+        """Capability multiplies the base score."""
+        fde = FederatedDecisionEngine()
+
+        full_cap = Provider(name="full", type="cloud", capability=1.0)
+        half_cap = Provider(name="half", type="cloud", capability=0.5)
+
+        context = RoutingContext(
+            prompt="Complex task",
+            complexity=ComplexityLevel.COMPLEX,
+            estimated_input_tokens=50,
+            estimated_output_tokens=150,
+        )
+
+        full_score = fde.score_provider(full_cap, context)
+        half_score = fde.score_provider(half_cap, context)
+
+        # COMPLEX + cloud base = 100.0, so scores should be 100.0 and 50.0
+        assert full_score.capability_score == pytest.approx(100.0)
+        assert half_score.capability_score == pytest.approx(50.0)

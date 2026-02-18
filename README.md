@@ -387,8 +387,8 @@ print(f"Provider: {public_response.provider}")  # gpt-4o-mini
 ```python
 from aigentic.core import DIO, Provider
 
-cloud = Provider(name="gpt-4o-mini", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02)
-local = Provider(name="llama3.2", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+cloud = Provider(name="gpt-4o-mini", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.8)
+local = Provider(name="llama3.2", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0, capability=0.4)
 
 dio = DIO(
     use_fde=True,
@@ -574,7 +574,7 @@ overall_score = (
 )
 ```
 
-Cost scoring uses per-token input/output rates with estimated token counts based on prompt length and complexity. **Provider with highest score wins.**
+Cost scoring uses per-token input/output rates with estimated token counts based on prompt length and complexity. Capability scoring uses each provider's `capability` field (0.0-1.0) to differentiate models of the same type — e.g., GPT-4o-mini (0.8) vs Gemini Flash (0.6). **Provider with highest score wins.**
 
 ---
 

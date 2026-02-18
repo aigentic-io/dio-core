@@ -258,18 +258,19 @@ class FederatedDecisionEngine:
 
         Cloud models generally better for complex tasks.
         Local models sufficient for simple tasks.
+        The base score is scaled by provider.capability (0.0-1.0) to
+        differentiate providers of the same type.
         """
         if context.complexity == ComplexityLevel.SIMPLE:
             # Simple queries work well on both, prefer local for cost
-            return 100.0 if provider.type == "local" else 85.0
-
+            base = 100.0 if provider.type == "local" else 85.0
         elif context.complexity == ComplexityLevel.MODERATE:
-            # Moderate queries work on both
-            return 90.0
-
+            # Moderate queries work on both, slight cloud preference
+            base = 90.0 if provider.type == "cloud" else 85.0
         else:  # COMPLEX
             # Complex queries benefit from larger cloud models
-            return 100.0 if provider.type == "cloud" else 70.0
+            base = 100.0 if provider.type == "cloud" else 70.0
+        return base * provider.capability
 
     def _score_latency(self, provider: Provider, context: RoutingContext) -> float:
         """Score latency expectations.

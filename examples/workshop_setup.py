@@ -50,7 +50,7 @@ def setup_dio_auto():
     google_key = os.getenv("GOOGLE_API_KEY")
 
     # Define local provider
-    local = Provider(name="local-llm", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+    local = Provider(name="local-llm", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0, capability=0.5)
 
     dio = DIO()
 
@@ -59,7 +59,7 @@ def setup_dio_auto():
     if openai_key:
         try:
             from aigentic.providers.openai import OpenAIProvider
-            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02,
+            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9,
                              metadata={"model": "gpt-4o-mini"})
             dio.add_provider(
                 cloud,
@@ -69,12 +69,12 @@ def setup_dio_auto():
         except Exception as e:
             print(f"  ⚠️  OpenAI setup failed: {e}")
             print("  ℹ️  Falling back to mock provider")
-            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02)
+            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9)
             dio.add_provider(cloud)
     elif anthropic_key:
         try:
             from aigentic.providers.claude import ClaudeProvider
-            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02,
+            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9,
                              metadata={"model": "claude-3-5-haiku-20241022"})
             dio.add_provider(
                 cloud,
@@ -84,12 +84,12 @@ def setup_dio_auto():
         except Exception as e:
             print(f"  ⚠️  Claude setup failed: {e}")
             print("  ℹ️  Falling back to mock provider")
-            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02)
+            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9)
             dio.add_provider(cloud)
     elif google_key:
         try:
             from aigentic.providers.gemini import GeminiProvider
-            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02,
+            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9,
                              metadata={"model": "gemini-2.5-flash"})
             dio.add_provider(
                 cloud,
@@ -99,10 +99,10 @@ def setup_dio_auto():
         except Exception as e:
             print(f"  ⚠️  Gemini setup failed: {e}")
             print("  ℹ️  Falling back to mock provider")
-            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02)
+            cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9)
             dio.add_provider(cloud)
     else:
-        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02)
+        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9)
         dio.add_provider(cloud)
         print("  ℹ️  Using mock cloud provider")
         print("  💡 Tip: Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for real responses")
@@ -131,7 +131,7 @@ def setup_dio_manual(cloud_provider="mock", local_provider="mock"):
     Returns:
         DIO: Configured DIO instance
     """
-    local = Provider(name="local-llm", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+    local = Provider(name="local-llm", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0, capability=0.5)
 
     dio = DIO()
 
@@ -141,7 +141,7 @@ def setup_dio_manual(cloud_provider="mock", local_provider="mock"):
         openai_key = os.getenv("OPENAI_API_KEY")
         if not openai_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
-        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02,
+        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9,
                          metadata={"model": "gpt-4o-mini"})
         dio.add_provider(cloud, adapter=OpenAIProvider(cloud, api_key=openai_key))
         print("✅ OpenAI configured")
@@ -151,7 +151,7 @@ def setup_dio_manual(cloud_provider="mock", local_provider="mock"):
         anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         if not anthropic_key:
             raise ValueError("ANTHROPIC_API_KEY environment variable not set")
-        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02,
+        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9,
                          metadata={"model": "claude-3-5-haiku-20241022"})
         dio.add_provider(cloud, adapter=ClaudeProvider(cloud, api_key=anthropic_key))
         print("✅ Claude configured")
@@ -161,13 +161,13 @@ def setup_dio_manual(cloud_provider="mock", local_provider="mock"):
         google_key = os.getenv("GOOGLE_API_KEY")
         if not google_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set")
-        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02,
+        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9,
                          metadata={"model": "gemini-2.5-flash"})
         dio.add_provider(cloud, adapter=GeminiProvider(cloud, api_key=google_key))
         print("✅ Gemini configured")
 
     else:  # mock
-        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02)
+        cloud = Provider(name="cloud-llm", type="cloud", cost_per_input_token=0.005, cost_per_output_token=0.02, capability=0.9)
         dio.add_provider(cloud)
         print("ℹ️  Mock cloud provider configured")
 

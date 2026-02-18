@@ -62,39 +62,43 @@ def main():
     # STEP 2: Configure Real Providers
     # =============================================================================
 
-    # OpenAI GPT-4o-mini (Cloud) - Best for complex reasoning
+    # OpenAI GPT-4o-mini (Cloud) - Mid-range pricing, strong general-purpose
     openai_provider = Provider(
         name="openai-gpt4",
         type="cloud",
-        cost_per_input_token=0.005,
-        cost_per_output_token=0.02,
-        metadata={"vendor": "openai", "model": "gpt-4"}
+        cost_per_input_token=0.0003,
+        cost_per_output_token=0.0006,
+        capability=0.8,
+        metadata={"vendor": "openai", "model": "gpt-4o-mini"}
     )
 
-    # Google Gemini Pro (Cloud) - Good balance of cost/performance
+    # Google Gemini Flash (Cloud) - Cheapest cloud option, fast but less capable
     gemini_provider = Provider(
         name="gemini-2.5-flash",
         type="cloud",
-        cost_per_input_token=0.005,
-        cost_per_output_token=0.015,
+        cost_per_input_token=0.0001,
+        cost_per_output_token=0.0004,
+        capability=0.6,
         metadata={"vendor": "google", "model": "gemini-2.5-flash"}
     )
 
-    # Claude (Cloud) - Good for reasoning and creativity
+    # Claude Haiku (Cloud) - Most expensive cloud option, strongest reasoning
     claude_provider = Provider(
         name="claude-3-5-haiku",
         type="cloud",
-        cost_per_input_token=0.005,
-        cost_per_output_token=0.015,
+        cost_per_input_token=0.0004,
+        cost_per_output_token=0.0008,
+        capability=0.9,
         metadata={"vendor": "anthropic", "model": "claude-3-5-haiku"}
     )
 
-    # Ollama Local (On-Prem) - Free, private, good for simple tasks
+    # Ollama Local (On-Prem) - Free, private, small model
     local_provider = Provider(
         name="ollama-llama3.2",
         type="local",
-        cost_per_input_token=0.0005,
-        cost_per_output_token=0.002,
+        cost_per_input_token=0.0,
+        cost_per_output_token=0.0,
+        capability=0.4,
         metadata={"vendor": "ollama", "model": "llama3.2:3b"}
     )
 
@@ -105,9 +109,9 @@ def main():
     dio = DIO(
         use_fde=True,
         fde_weights={
-            "privacy": 0.40,
-            "cost": 0.25,
-            "capability": 0.25,
+            "privacy": 0.35,
+            "cost": 0.20,
+            "capability": 0.35,
             "latency": 0.10,
         },
         privacy_providers=["ollama-llama3.2"]  # Only local for PII
@@ -117,11 +121,11 @@ def main():
     # WORKSHOP EXERCISE 2: Tune FDE Weights for Cost Optimization
     # WORKSHOP TODO: Uncomment the code below to prioritize cost over capability
     # =============================================================================
-    # Reconfigure DIO to prioritize cost (75%) over capability (15%)
+    # Reconfigure DIO to prioritize cost over capability
     # dio.fde_weights = {
-    #     "privacy": 0.40,   # Still top priority for PII
+    #     "privacy": 0.35,   # Still top priority for PII
     #     "cost": 0.35,      # Increased: prefer cheaper models
-    #     "capability": 0.15,  # Decreased: less emphasis on performance
+    #     "capability": 0.20,  # Decreased: less emphasis on performance
     #     "latency": 0.10,   # Same: fast responses still matter
     # }
     # print("💡 FDE weights updated to prioritize cost optimization!")
