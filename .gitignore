@@ -12,5 +12,6 @@ build/
 dist/
 *.egg-info/
 
+docs/
 SPEAKER_NOTES.md
 aigentic/docs/INTERNAL.md
