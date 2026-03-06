@@ -2,6 +2,7 @@
 
 from aigentic.providers.mock import MockProvider
 from aigentic.providers.ollama import OllamaProvider
+from aigentic.providers.webhost import WebhostProvider
 
 # Optional cloud providers (require additional dependencies)
 try:
@@ -19,4 +20,4 @@ try:
 except ImportError:
     ClaudeProvider = None
 
-__all__ = ["MockProvider", "OllamaProvider", "OpenAIProvider", "GeminiProvider", "ClaudeProvider"]
+__all__ = ["MockProvider", "OllamaProvider", "WebhostProvider", "OpenAIProvider", "GeminiProvider", "ClaudeProvider"]
