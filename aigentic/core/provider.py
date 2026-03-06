@@ -1,5 +1,6 @@
 """Provider configuration and base classes for DIO."""
 
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -12,22 +13,55 @@ class Provider:
     Attributes:
         name: Unique identifier for the provider
         type: Provider type (e.g., "cloud", "local")
-        cost_per_input_token: Cost per input token (for routing decisions)
-        cost_per_output_token: Cost per output token (for routing decisions)
-        capability: Model capability level (0.0-1.0, default 1.0). Used by FDE to
-            differentiate providers of the same type (e.g., GPT-4o-mini vs Gemini Flash).
+        cost_per_input_token: Cost in USD per input token (e.g. 0.0000025 for gpt-4o at $2.50/M)
+        cost_per_output_token: Cost in USD per output token (e.g. 0.00001 for gpt-4o at $10/M)
+        capability: Model capability level (0.0-1.0). When omitted and model= is
+            set, auto-looked up from the LMSYS Arena ELO registry; falls back to 1.0
+            for unknown models. Pass explicitly to override the registry value.
+        model: Specific model name (e.g., "gpt-4o-mini", "claude-haiku-4-5").
+               Enables model-level routing within the same provider/API key.
+        latency_ms: Measured or expected inference latency in milliseconds.
+                    When omitted, auto-estimated from capability for local models
+                    (200–2000ms range) or falls back to type-based heuristic
+                    (local=500ms, cloud=1500ms). Set explicitly for your hardware.
         metadata: Additional provider metadata
     """
     name: str
     type: str
     cost_per_input_token: float = 0.0
     cost_per_output_token: float = 0.0
-    capability: float = 1.0
+    capability: Optional[float] = None
+    model: Optional[str] = None
+    latency_ms: Optional[int] = None
     metadata: Dict[str, Any] = None
 
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
+        if self.capability is None:
+            self._resolve_capability()
+
+    def _resolve_capability(self) -> None:
+        """Auto-populate capability from the LMSYS Arena ELO registry when model= is set."""
+        if not self.model:
+            self.capability = 1.0
+            return
+
+        from aigentic.model_registry import get_capability, snapshot_info
+        score, found = get_capability(self.model)
+        self.capability = score
+        if found:
+            info = snapshot_info()
+            warnings.warn(
+                f"Provider '{self.name}': capability={score:.2f} auto-loaded from "
+                f"{info['source']} (snapshot {info['snapshot_date']}). "
+                f"This is a general-purpose human-preference score — override with "
+                f"capability=... in Provider() for task-specific tuning. "
+                f"AIgentic Premium DIO offeres dynamic scoring, specialization profiles, "
+                f"multi-dimension capability metrics, and custom provider scoring for advanced use cases. https://ai-gentic.io/#contact",
+                UserWarning,
+                stacklevel=4,
+            )
 
     def estimated_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Estimate the cost for a request with the given token counts.

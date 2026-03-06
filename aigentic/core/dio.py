@@ -147,7 +147,10 @@ class DIO:
         else:
             # Use simple policy-based router
             provider_name = self.router.route(prompt)
-            metadata = {"routing_mode": "policy", "classification": "routed"}
+            metadata = {
+                "routing_mode": "policy",
+                "classification": self.router.classification,
+            }
 
         if provider_name is None:
             raise ValueError("No suitable provider found for this request")

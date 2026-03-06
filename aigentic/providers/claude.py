@@ -28,9 +28,12 @@ class ClaudeProvider(ProviderAdapter):
         """
         super().__init__(provider)
         self.api_key = api_key
-        self.model = self.provider.metadata.get("model")
+        self.model = self.provider.model or self.provider.metadata.get("model")
         if not self.model:
-            raise ValueError("Claude model name must be specified in provider metadata")
+            raise ValueError(
+                "Claude model name must be specified via Provider(model=...) "
+                "or provider metadata"
+            )
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = None
