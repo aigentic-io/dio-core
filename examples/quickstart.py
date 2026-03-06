@@ -11,8 +11,8 @@ from aigentic.core.provider import MockProvider
 from aigentic.core.pii_detector import has_pii
 
 # Setup providers with per-token pricing
-cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03, capability=0.9)
-local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.005, cost_per_output_token=0.015, capability=0.5)
+cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.000003, cost_per_output_token=0.000015, capability=0.9)
+local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.0000005, cost_per_output_token=0.000002, capability=0.5)
 
 # Initialize DIO
 dio = DIO()
@@ -39,17 +39,17 @@ dio.add_policy(rule=privacy_rule, enforcement="strict")
 #     """Route simple queries to cheap local model, complex to cloud."""
 #     prompt = request.prompt.lower()
 #     simple_keywords = ["what is", "define", "explain briefly", "simple"]
-#
+
 #     # Check if prompt contains simple keywords
 #     for keyword in simple_keywords:
 #         if keyword in prompt:
 #             return "SIMPLE"
-#
+
 #     return "COMPLEX"
-#
+
 # # Add the cost optimizer policy (advisory = can be overridden by privacy)
 # dio.add_policy(rule=cost_optimizer, enforcement="advisory")
-#
+
 # # Map custom classifications to providers
 # dio.set_classification_mapping("SIMPLE", local)   # Cheap queries → local
 # dio.set_classification_mapping("COMPLEX", cloud)  # Complex queries → cloud
@@ -65,8 +65,8 @@ dio.add_policy(rule=privacy_rule, enforcement="strict")
 #     """Print a per-token cost breakdown for a provider."""
 #     cost = provider.estimated_cost(input_tokens, output_tokens)
 #     print(f"    Provider: {provider.name}")
-#     print(f"    Input:  {input_tokens} tokens x ${provider.cost_per_input_token} = ${input_tokens * provider.cost_per_input_token:.4f}")
-#     print(f"    Output: {output_tokens} tokens x ${provider.cost_per_output_token} = ${output_tokens * provider.cost_per_output_token:.4f}")
+#     print(f"    Input:  {input_tokens} tokens x ${provider.cost_per_input_token:.8f} = ${input_tokens * provider.cost_per_input_token:.6f}")
+#     print(f"    Output: {output_tokens} tokens x ${provider.cost_per_output_token:.8f} = ${output_tokens * provider.cost_per_output_token:.6f}")
 #     print(f"    Total estimated cost: ${cost:.4f}")
 
 # =============================================================================
@@ -83,6 +83,7 @@ print("📝 Example 1: Privacy Policy - SSN detected (PII → local)")
 response = dio.route("My SSN is 123-45-6789")
 print(f"  Prompt: 'My SSN is 123-45-6789'")
 print(f"  Provider: {response.provider}")
+print(f"  Classification: {response.metadata.get('classification') or 'N/A'}")
 print(f"  Content: {response.content}")
 print(f"  💡 PII detected → strict RESTRICTED → forced to local provider")
 print()
@@ -91,6 +92,7 @@ print("📝 Example 2: Privacy Policy - Email detected (PII → local)")
 response = dio.route("Please contact me at user@example.com")
 print(f"  Prompt: 'Please contact me at user@example.com'")
 print(f"  Provider: {response.provider}")
+print(f"  Classification: {response.metadata.get('classification') or 'N/A'}")
 print(f"  Content: {response.content}")
 print(f"  💡 PII detected → strict RESTRICTED → forced to local provider")
 print()
@@ -104,6 +106,7 @@ print("📝 Example 3: Cost Optimizer - Simple query should route to local")
 response = dio.route("What is Python?")
 print(f"  Prompt: 'What is Python?'")
 print(f"  Provider: {response.provider}")
+print(f"  Classification: {response.metadata.get('classification') or 'N/A'}")
 print(f"  Content: {response.content}")
 if cost_optimizer_active:
     print(f"  💡 No PII → cost optimizer classifies SIMPLE → routed to local (cheaper)")
@@ -116,6 +119,7 @@ print("📝 Example 4: Cost Optimizer - Complex query should route to cloud")
 response = dio.route("Explain the CAP theorem in distributed systems with examples")
 print(f"  Prompt: 'Explain the CAP theorem...'")
 print(f"  Provider: {response.provider}")
+print(f"  Classification: {response.metadata.get('classification') or 'N/A'}")
 print(f"  Content: {response.content}")
 if cost_optimizer_active:
     print(f"  💡 No PII → cost optimizer classifies COMPLEX → routed to cloud (best capability)")
@@ -128,6 +132,7 @@ print("📝 Example 5: Strict vs Advisory - PII overrides cost optimizer")
 response = dio.route("Analyze the cryptographic security of SSN 123-45-6789 in distributed systems")
 print(f"  Prompt: 'Analyze the cryptographic security of SSN 123-45-6789...'")
 print(f"  Provider: {response.provider}")
+print(f"  Classification: {response.metadata.get('classification') or 'N/A'}")
 if cost_optimizer_active:
     print(f"  💡 PII detected → strict RESTRICTED overrides advisory cost optimizer")
     print(f"  💡 Even though cost optimizer would classify COMPLEX → cloud, privacy wins")
@@ -168,8 +173,8 @@ class FailingProvider(MockProvider):
 print("📝 Example 7: Failover - Primary cloud provider is down")
 
 # Set up a failing primary and a healthy backup
-cloud_primary = Provider(name="bedrock-primary", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-cloud_backup = Provider(name="bedrock-backup", type="cloud", cost_per_input_token=0.008, cost_per_output_token=0.025)
+cloud_primary = Provider(name="bedrock-primary", type="cloud", cost_per_input_token=0.000003, cost_per_output_token=0.000015)
+cloud_backup = Provider(name="bedrock-backup", type="cloud", cost_per_input_token=0.0000025, cost_per_output_token=0.0000125)
 
 failover_dio = DIO()
 failover_dio.add_provider(cloud_primary, adapter=FailingProvider(cloud_primary))
@@ -182,6 +187,7 @@ response = failover_dio.route("Explain quantum computing")
 print(f"  Prompt: 'Explain quantum computing'")
 print(f"  Primary provider: bedrock-primary (simulated outage)")
 print(f"  Provider used: {response.provider}")
+print(f"  Classification: {response.metadata.get('classification') or 'N/A'}")
 print(f"  Was fallback used: {response.was_fallback}")
 print(f"  Fallback reason: {response.metadata.get('fallback_reason', 'N/A')}")
 print(f"  Content: {response.content}")

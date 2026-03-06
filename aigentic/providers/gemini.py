@@ -1,14 +1,12 @@
 """Google Gemini provider adapter for cloud inference."""
 
-from typing import Optional
-
 from aigentic.core.provider import Provider, ProviderAdapter
 
 
 class GeminiProvider(ProviderAdapter):
     """Google Gemini adapter for cloud model inference.
 
-    Requires: pip install google-generativeai
+    Requires: pip install google-genai
     """
 
     def __init__(
@@ -26,28 +24,28 @@ class GeminiProvider(ProviderAdapter):
         """
         super().__init__(provider)
         self.api_key = api_key
-        # Get model from provider metadata, not a hardcoded default
-        self.model_name = self.provider.metadata.get("model")
+        self.model_name = self.provider.model or self.provider.metadata.get("model")
         if not self.model_name:
-            raise ValueError("Gemini model name must be specified in provider metadata")
+            raise ValueError(
+                "Gemini model name must be specified via Provider(model=...) "
+                "or provider metadata"
+            )
         self.temperature = temperature
-        self._model = None
+        self._client = None
 
     @property
-    def model(self):
-        """Lazy load Gemini model using the new 'google.genai' library."""
-        if self._model is None:
+    def client(self):
+        """Lazy load Gemini client."""
+        if self._client is None:
             try:
-                # Use the new, recommended 'google.genai' library
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                self._model = genai.GenerativeModel(self.model_name)
+                from google import genai
+                self._client = genai.Client(api_key=self.api_key)
             except ImportError:
                 raise ImportError(
-                    "Google Generative AI package not found. "
-                    "Install with: pip install google-generativeai"
+                    "Google GenAI package not found. "
+                    "Install with: pip install google-genai"
                 )
-        return self._model
+        return self._client
 
     def generate(self, prompt: str, **kwargs) -> str:
         """Generate a response using Gemini.
@@ -59,13 +57,16 @@ class GeminiProvider(ProviderAdapter):
         Returns:
             Generated response text
         """
-        generation_config = {
-            "temperature": kwargs.get("temperature", self.temperature),
-            "max_output_tokens": kwargs.get("max_tokens", 1000),
-        }
+        from google.genai import types
 
-        response = self.model.generate_content(
-            prompt,
-            generation_config=generation_config
+        config = types.GenerateContentConfig(
+            temperature=kwargs.get("temperature", self.temperature),
+            max_output_tokens=kwargs.get("max_tokens", 1000),
+        )
+
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=config,
         )
         return response.text
