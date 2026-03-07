@@ -16,7 +16,7 @@ class WebhostProvider(ProviderAdapter):
 
     Example:
         provider = Provider(name="my-llama", type="local", model="llama3.2:3b")
-        adapter = WebhostProvider(provider, base_url="http://100.00.00.00:11434")
+        adapter = WebhostProvider(provider, base_url="http://192.168.1.100:11434")
         dio.add_provider(provider, adapter=adapter)
 
         curl http://base_url/api/generate -d '{"model": "gpt-oss:20b", "prompt": "Hello, World!", "stream": false}'

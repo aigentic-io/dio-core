@@ -57,7 +57,7 @@ class Provider:
                 f"{info['source']} (snapshot {info['snapshot_date']}). "
                 f"This is a general-purpose human-preference score — override with "
                 f"capability=... in Provider() for task-specific tuning. "
-                f"AIgentic Premium DIO offeres dynamic scoring, specialization profiles, "
+                f"AIgentic Premium DIO offers dynamic scoring, specialization profiles, "
                 f"multi-dimension capability metrics, and custom provider scoring for advanced use cases. https://ai-gentic.io/#contact",
                 UserWarning,
                 stacklevel=4,

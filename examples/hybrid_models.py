@@ -29,13 +29,15 @@ Setup:
 import os
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Add parent directory to path for development mode
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from aigentic.core import DIO, Provider
 from aigentic.providers.openai import OpenAIProvider

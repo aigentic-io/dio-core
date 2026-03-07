@@ -250,9 +250,9 @@ class FederatedDecisionEngine:
         if estimated_cost == 0:
             return 100.0
 
-        # Log scale: reference = $0.000001/request (≈ 100 tokens on a mid-range model).
+        # Log scale: reference = $0.00025/request (≈ 100 tokens on a mid-range model).
         # Costs are in $/token. Each 10x increase in cost = −20 pts.
-        reference_cost = 0.000001
+        reference_cost = 0.00025
         log_ratio = math.log10(estimated_cost / reference_cost)
         return max(0.0, min(100.0, 100.0 - 20.0 * log_ratio))
 
