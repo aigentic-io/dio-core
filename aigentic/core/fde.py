@@ -7,6 +7,7 @@ The FDE is the core algorithm that routes prompts based on:
 - Latency requirements
 """
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
@@ -231,9 +232,10 @@ class FederatedDecisionEngine:
         return input_tokens * multipliers[complexity]
 
     def _score_cost(self, provider: Provider, context: RoutingContext) -> float:
-        """Score cost efficiency.
+        """Score cost efficiency using a log scale.
 
-        Lower cost = higher score. Uses per-token cost estimates.
+        Lower cost = higher score. Each 10x increase in cost costs ~20 points.
+        Reference: $0.001/request scores 100; $0.01 → 80; $0.10 → 60; $1.00 → 40.
         """
         estimated_cost = provider.estimated_cost(
             context.estimated_input_tokens,
@@ -248,10 +250,12 @@ class FederatedDecisionEngine:
         if estimated_cost == 0:
             return 100.0
 
-        # Normalize cost to 0-100 scale (assuming max cost of $0.10 per request)
-        max_reasonable_cost = 0.10
-        cost_ratio = min(estimated_cost / max_reasonable_cost, 1.0)
-        return (1.0 - cost_ratio) * 100
+        # Scoring floor: costs at or below this earn 100 pts.
+        # Each 10x above this costs −20 pts. Calibrated so that:
+        #   free/local = 100, cheap cloud (gemini-flash) ≈ 75, frontier (gpt-4o) ≈ 46.
+        reference_cost = 0.000001
+        log_ratio = math.log10(estimated_cost / reference_cost)
+        return max(0.0, min(100.0, 100.0 - 20.0 * log_ratio))
 
     def _score_capability(self, provider: Provider, context: RoutingContext) -> float:
         """Score capability match for complexity.
@@ -260,10 +264,21 @@ class FederatedDecisionEngine:
         Local models sufficient for simple tasks.
         The base score is scaled by provider.capability (0.0-1.0) to
         differentiate providers of the same type.
+
+        For SIMPLE tasks, scoring is "Goldilocks": capability peaks at ~0.5.
+        Under-powered models score proportionally lower; over-powered models
+        incur a small penalty (wasteful for simple queries). This prevents a
+        heavyweight model from always winning simple queries purely on capability.
         """
         if context.complexity == ComplexityLevel.SIMPLE:
             # Simple queries work well on both, prefer local for cost
             base = 100.0 if provider.type == "local" else 85.0
+            # Goldilocks: score peaks at capability=0.5 (sufficient for simple tasks).
+            # Below 0.5: scale linearly from 0. Above 0.5: slight penalty for excess.
+            if provider.capability <= 0.5:
+                return base * (provider.capability / 0.5)
+            overshoot = provider.capability - 0.5
+            return base * max(0.6, 1.0 - overshoot * 0.8)
         elif context.complexity == ComplexityLevel.MODERATE:
             # Moderate queries work on both, slight cloud preference
             base = 90.0 if provider.type == "cloud" else 85.0
@@ -275,11 +290,19 @@ class FederatedDecisionEngine:
     def _score_latency(self, provider: Provider, context: RoutingContext) -> float:
         """Score latency expectations.
 
-        Local models typically faster than cloud APIs.
+        Three-level fallback for latency estimation:
+          1. provider.latency_ms — explicit measured value (most accurate, hardware-specific)
+          2. Capability-derived estimate for local models — model size correlates with
+             inference speed: latency_ms = 200 + capability * 1800 (200ms–2000ms range)
+          3. Type-based heuristic — local=500ms, cloud=1500ms
         """
-        # In real implementation, this would use measured latency
-        # For now, use type-based heuristic
-        estimated_latency_ms = 500 if provider.type == "local" else 1500
+        if provider.latency_ms is not None:
+            estimated_latency_ms = provider.latency_ms
+        elif provider.type == "local" and provider.capability is not None:
+            # Larger/more-capable models are slower: 0.0→200ms, 0.5→1100ms, 1.0→2000ms
+            estimated_latency_ms = 200 + int(provider.capability * 1800)
+        else:
+            estimated_latency_ms = 500 if provider.type == "local" else 1500
 
         if context.max_latency_ms is not None:
             if estimated_latency_ms > context.max_latency_ms:

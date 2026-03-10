@@ -45,7 +45,7 @@ class TestRouter:
 
         # Add providers
         local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
+        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
         router.add_provider(local)
         router.add_provider(cloud)
 
@@ -128,7 +128,7 @@ class TestRouter:
         router = Router()
 
         # Add cloud and local providers
-        cloud = Provider(name="cloud-provider", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
+        cloud = Provider(name="cloud-provider", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
         local = Provider(name="local-provider", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
         router.add_provider(cloud)
         router.add_provider(local)
@@ -151,7 +151,7 @@ class TestRouter:
         """Test automatic routing for PRIVATE classification."""
         router = Router()
 
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
+        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
         local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
         router.add_provider(cloud)
         router.add_provider(local)
@@ -164,11 +164,77 @@ class TestRouter:
         # PRIVATE should route to local (same as RESTRICTED)
         assert router.route("test") == "local"
 
+    # -------------------------------------------------------------------------
+    # Model-level routing tests
+    # -------------------------------------------------------------------------
+
+    def test_provider_model_field(self):
+        """Provider accepts a first-class model field."""
+        p = Provider(name="openai-mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini")
+        assert p.model == "gpt-4o-mini"
+
+    def test_provider_model_defaults_none(self):
+        """Existing Provider construction without model field is unaffected."""
+        p = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
+        assert p.model is None
+
+    def test_provider_model_alongside_metadata(self):
+        """model field and metadata coexist independently."""
+        p = Provider(
+            name="openai-mini",
+            type="cloud",
+            cost_per_input_token=0.0001,
+            cost_per_output_token=0.0003,
+            model="gpt-4o-mini",
+            metadata={"vendor": "openai"},
+        )
+        assert p.model == "gpt-4o-mini"
+        assert p.metadata["vendor"] == "openai"
+
+    def test_two_cloud_providers_different_models_are_independent_arms(self):
+        """Two providers sharing the same type but different models are distinct routing arms."""
+        router = Router()
+        cheap = Provider(name="openai-mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini")
+        expensive = Provider(name="openai-full", type="cloud", cost_per_input_token=0.0002, cost_per_output_token=0.0005, model="gpt-4o")
+        router.add_provider(cheap)
+        router.add_provider(expensive)
+
+        assert len(router.providers) == 2
+        assert router.providers["openai-mini"].model == "gpt-4o-mini"
+        assert router.providers["openai-full"].model == "gpt-4o"
+
+    def test_fde_routes_simple_query_to_cheaper_model(self):
+        """FDE prefers the cheaper cloud model for simple queries when both are cloud type."""
+        from aigentic.core.fde import FederatedDecisionEngine
+
+        # capability pinned equal so this test isolates cost routing behavior
+        cheap = Provider(name="mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini", capability=0.5)
+        expensive = Provider(name="full", type="cloud", cost_per_input_token=0.0002, cost_per_output_token=0.0005, model="gpt-4o", capability=0.5)
+        fde = FederatedDecisionEngine()
+
+        selected, score = fde.route({"mini": cheap, "full": expensive}, "What is Python?")
+        assert selected == "mini"
+
+    def test_fde_differentiates_models_by_cost_score(self):
+        """FDE assigns a higher cost score to the cheaper model."""
+        from aigentic.core.fde import FederatedDecisionEngine
+        from aigentic.core.fde import RoutingContext, ComplexityLevel
+
+        # capability pinned equal so this test isolates cost scoring behavior
+        cheap = Provider(name="mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini", capability=0.5)
+        expensive = Provider(name="full", type="cloud", cost_per_input_token=0.0002, cost_per_output_token=0.0005, model="gpt-4o", capability=0.5)
+        fde = FederatedDecisionEngine()
+        ctx = RoutingContext(prompt="hi", complexity=ComplexityLevel.SIMPLE, estimated_input_tokens=100, estimated_output_tokens=100)
+
+        cheap_score = fde.score_provider(cheap, ctx)
+        expensive_score = fde.score_provider(expensive, ctx)
+        assert cheap_score.cost_score > expensive_score.cost_score
+
     def test_explicit_mapping_overrides_automatic(self):
         """Test that explicit mappings override automatic behavior."""
         router = Router()
 
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
+        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
         local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
         router.add_provider(cloud)
         router.add_provider(local)

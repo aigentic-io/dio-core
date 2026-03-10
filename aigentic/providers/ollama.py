@@ -23,9 +23,12 @@ class OllamaProvider(ProviderAdapter):
             base_url: Ollama API base URL
         """
         super().__init__(provider)
-        self.model = self.provider.metadata.get("model")
+        self.model = self.provider.model or self.provider.metadata.get("model")
         if not self.model:
-            raise ValueError("Ollama model name must be specified in provider metadata")
+            raise ValueError(
+                "Ollama model name must be specified via Provider(model=...) "
+                "or provider metadata"
+            )
         self.base_url = base_url
 
     def generate(self, prompt: str, **kwargs) -> str:

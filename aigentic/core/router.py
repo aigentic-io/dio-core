@@ -49,6 +49,8 @@ class Router:
         self.policies: List[Policy] = []
         self.classification_map: Dict[str, str] = {}
 
+        self.classification: Optional[str] = None
+
     def add_provider(self, provider: Provider):
         """Add a provider to the routing table.
 
@@ -97,6 +99,7 @@ class Router:
         Returns:
             Provider name to use, or None if no suitable provider found
         """
+        self.classification = None
         request = Request(prompt=prompt)
 
         fallback_classification = None
@@ -107,6 +110,7 @@ class Router:
 
             # For strict enforcement, use classification to select provider
             if policy.enforcement == "strict":
+                self.classification = classification
                 # Check explicit mapping first
                 if classification in self.classification_map:
                     return self.classification_map[classification]
@@ -127,6 +131,7 @@ class Router:
             # For advisory enforcement, check mappings
             if policy.enforcement == "advisory":
                 if classification in self.classification_map:
+                    self.classification = classification  # record advisory decision
                     return self.classification_map[classification]
 
         # Fall back to PUBLIC smart default if no advisory policy matched
