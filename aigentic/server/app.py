@@ -1,0 +1,154 @@
+"""DIO REST API server — optional module (pip install aigentic[server]).
+
+Usage:
+    uvicorn aigentic.server.app:app --reload
+
+Environment variables:
+    DIO_API_KEY         Bearer token for auth (optional; open mode if unset)
+    OPENAI_API_KEY      Enables OpenAI gpt-4o provider
+    ANTHROPIC_API_KEY   Enables Claude claude-3-5-haiku provider
+    GOOGLE_API_KEY      Enables Gemini gemini-2.0-flash provider
+    OLLAMA_BASE_URL     Enables remote Ollama provider
+    LOG_LEVEL           Logging level: DEBUG, INFO, WARNING (default: INFO)
+
+Request headers (consumed server-side, not in the request body):
+    Authorization: Bearer <jwt>      — identity; JWT sub claim → user_id for logging
+    Accept-Language: zh-CN,en;q=0.8  — ordered language preference (RFC 7231)
+    X-Session-ID: <uuid>             — groups requests in a conversation
+    X-Request-ID: <uuid>             — per-request trace ID (echoed in response)
+"""
+
+import json
+import logging
+import os
+import warnings
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
+    from fastapi import FastAPI
+except ImportError as exc:
+    raise ImportError(
+        "FastAPI is required for the DIO server. "
+        "Install it with: pip install aigentic[server]"
+    ) from exc
+
+from aigentic.core import DIO, Provider
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# Bare format — we emit NDJSON ourselves so log aggregators can parse each line.
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(message)s",
+)
+logger = logging.getLogger("dio.server")
+
+
+# ── DIO instance ──────────────────────────────────────────────────────────────
+def _build_dio() -> DIO:
+    """Build DIO from environment variables.
+
+    Always registers two mock on-device providers (gemini-nano, phi-3-mini) to
+    simulate Android on-device inference — routing stubs only, actual inference
+    runs on the device itself. Capabilities auto-loaded from the model registry.
+    Cloud providers are only added when their API key is present.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+
+        dio = DIO(
+            use_fde=True,
+            fde_weights={
+                "privacy":    0.40,
+                "cost":       0.20,
+                "capability": 0.30,
+                "latency":    0.10,
+            },
+            privacy_providers=["gemini-nano", "phi-3-mini"],
+        )
+
+        # On-device simulation providers — always registered, no API key needed.
+        # Latency values reflect simulated on-device inference (not network latency).
+        dio.add_provider(Provider(
+            name="gemini-nano", type="local",
+            model="gemini-nano", latency_ms=50,
+        ))
+        dio.add_provider(Provider(
+            name="phi-3-mini", type="local",
+            model="phi-3-mini", latency_ms=120,
+        ))
+
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            try:
+                from aigentic.providers.openai import OpenAIProvider
+                p = Provider(
+                    name="gpt-4o", type="cloud",
+                    cost_per_input_token=0.0000025, cost_per_output_token=0.00001,
+                    model="gpt-4o",
+                )
+                dio.add_provider(p, adapter=OpenAIProvider(p, api_key=openai_key))
+            except Exception as e:
+                logger.warning(json.dumps({"event": "provider_skipped", "provider": "gpt-4o", "reason": str(e)}))
+
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        if anthropic_key:
+            try:
+                from aigentic.providers.claude import ClaudeProvider
+                p = Provider(
+                    name="claude-haiku", type="cloud",
+                    cost_per_input_token=0.0000008, cost_per_output_token=0.000004,
+                    model="claude-3-5-haiku-20241022",
+                )
+                dio.add_provider(p, adapter=ClaudeProvider(p, api_key=anthropic_key))
+            except Exception as e:
+                logger.warning(json.dumps({"event": "provider_skipped", "provider": "claude-haiku", "reason": str(e)}))
+
+        google_key = os.getenv("GOOGLE_API_KEY")
+        if google_key:
+            try:
+                from aigentic.providers.gemini import GeminiProvider
+                p = Provider(
+                    name="gemini-flash", type="cloud",
+                    cost_per_input_token=0.0000001, cost_per_output_token=0.0000004,
+                    model="gemini-2.0-flash",
+                )
+                dio.add_provider(p, adapter=GeminiProvider(p, api_key=google_key))
+            except Exception as e:
+                logger.warning(json.dumps({"event": "provider_skipped", "provider": "gemini-flash", "reason": str(e)}))
+
+        ollama_url = os.getenv("OLLAMA_BASE_URL")
+        if ollama_url:
+            try:
+                from aigentic.providers.webhost import WebhostProvider
+                p = Provider(
+                    name="ollama-local", type="local",
+                    cost_per_input_token=0.00000001, cost_per_output_token=0.00000001,
+                    model="llama3:latest",
+                )
+                dio.add_provider(p, adapter=WebhostProvider(p, base_url=ollama_url))
+            except Exception as e:
+                logger.warning(json.dumps({"event": "provider_skipped", "provider": "ollama-local", "reason": str(e)}))
+
+    return dio
+
+
+# ── FastAPI app ────────────────────────────────────────────────────────────────
+# Import routes after dotenv is loaded so _API_KEY reads correctly.
+from aigentic.server.routes import router  # noqa: E402
+
+app = FastAPI(
+    title="DIO Routing API",
+    description=(
+        "Federated Decision Engine for adaptive LLM routing. "
+        "Routes content to the optimal provider based on privacy, cost, "
+        "capability, and latency. User identity is resolved from the Bearer token."
+    ),
+    version="0.1.0",
+)
+app.state.dio = _build_dio()
+app.include_router(router)
