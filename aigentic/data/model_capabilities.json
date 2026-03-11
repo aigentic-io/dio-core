@@ -83,6 +83,7 @@
     "gpt-3.5": 0.44,
     "text-davinci": 0.39,
     "vicuna": 0.34,
-    "alpaca": 0.27
+    "alpaca": 0.27,
+    "gemini-nano": 0.30
   }
 }
