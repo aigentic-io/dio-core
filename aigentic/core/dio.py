@@ -3,7 +3,7 @@
 from typing import Callable, Dict, List, Optional, Type
 
 from aigentic.core.fde import FederatedDecisionEngine
-from aigentic.core.provider import Provider, ProviderAdapter, MockProvider
+from aigentic.core.provider import MockProvider, Provider, ProviderAdapter
 from aigentic.core.response import Response
 from aigentic.core.router import Policy, Router
 

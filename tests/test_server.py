@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from aigentic.core import DIO, Provider
 from aigentic.server.app import app
 
-
 # ── Test DIO fixture ──────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)

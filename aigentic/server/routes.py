@@ -148,12 +148,17 @@ def infer(req: InferRequest, request: Request, response: Response, _=Depends(_ch
     # User-level policy (tier caps, privacy rules) is applied here by dio-platform
     # after resolving the token — in dio-core it falls through to FDE defaults.
     fde_kwargs = to_fde_kwargs(req.client_context)
-    if req.require_local is not None:  fde_kwargs["require_local"] = req.require_local
-    if req.max_cost is not None:       fde_kwargs["max_cost"] = req.max_cost
-    if req.max_latency_ms is not None: fde_kwargs["max_latency_ms"] = req.max_latency_ms
+    if req.require_local is not None:
+        fde_kwargs["require_local"] = req.require_local
+    if req.max_cost is not None:
+        fde_kwargs["max_cost"] = req.max_cost
+    if req.max_latency_ms is not None:
+        fde_kwargs["max_latency_ms"] = req.max_latency_ms
     # Inference params — passed through to the selected provider adapter
-    if req.temperature is not None:    fde_kwargs["temperature"] = req.temperature
-    if req.max_tokens is not None:     fde_kwargs["max_tokens"] = req.max_tokens
+    if req.temperature is not None:
+        fde_kwargs["temperature"] = req.temperature
+    if req.max_tokens is not None:
+        fde_kwargs["max_tokens"] = req.max_tokens
 
     # Reject multimodal content — not yet supported in dio-core.
     if any(isinstance(msg.content, list) for msg in req.messages):

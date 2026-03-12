@@ -1,7 +1,6 @@
 """Unit tests for WebhostProvider (mocked HTTP — no live connection needed)."""
 
 import json
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest

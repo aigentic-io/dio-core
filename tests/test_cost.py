@@ -2,12 +2,12 @@
 
 import pytest
 
-from aigentic.core.provider import Provider
 from aigentic.core.fde import (
     ComplexityLevel,
     FederatedDecisionEngine,
     RoutingContext,
 )
+from aigentic.core.provider import Provider
 
 
 class TestProviderCost:

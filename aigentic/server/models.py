@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
-
 # ── Multimodal content parts (OpenAI / OpenRouter / LiteLLM compatible) ───────
 
 class ImageUrl(BaseModel):

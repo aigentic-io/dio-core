@@ -1,6 +1,5 @@
 """OpenAI provider adapter for cloud inference."""
 
-from typing import Optional
 
 from aigentic.core.provider import Provider, ProviderAdapter
 

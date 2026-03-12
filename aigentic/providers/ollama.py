@@ -1,6 +1,5 @@
 """Ollama provider adapter for local LLM inference."""
 
-from typing import Optional
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
