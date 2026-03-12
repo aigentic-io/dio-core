@@ -1,6 +1,5 @@
 """Tests for routing functionality."""
 
-import pytest
 
 from aigentic.core.provider import Provider
 from aigentic.core.router import Policy, Request, Router
@@ -217,8 +216,7 @@ class TestRouter:
 
     def test_fde_differentiates_models_by_cost_score(self):
         """FDE assigns a higher cost score to the cheaper model."""
-        from aigentic.core.fde import FederatedDecisionEngine
-        from aigentic.core.fde import RoutingContext, ComplexityLevel
+        from aigentic.core.fde import ComplexityLevel, FederatedDecisionEngine, RoutingContext
 
         # capability pinned equal so this test isolates cost scoring behavior
         cheap = Provider(name="mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini", capability=0.5)

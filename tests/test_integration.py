@@ -1,10 +1,8 @@
 """Integration tests for DIO framework."""
 
-import pytest
 
 from aigentic.core import DIO, Provider
 from aigentic.core.pii_detector import has_pii
-from aigentic.core.router import Request
 
 
 class TestDIOIntegration:

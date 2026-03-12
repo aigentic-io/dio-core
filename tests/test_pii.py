@@ -1,6 +1,5 @@
 """Tests for PII detection functionality."""
 
-import pytest
 
 from aigentic.core.pii_detector import PIIDetector, has_pii
 
