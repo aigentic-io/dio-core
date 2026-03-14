@@ -1,7 +1,9 @@
 """Tests for routing functionality."""
 
+import warnings
 
-from aigentic.core.provider import Provider
+from aigentic.core import DIO, Provider
+from aigentic.core.provider import MockProvider
 from aigentic.core.router import Policy, Request, Router
 
 
@@ -11,7 +13,7 @@ class TestRouter:
     def test_add_provider(self):
         """Test adding providers to the router."""
         router = Router()
-        provider = Provider(name="test-provider", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        provider = Provider(name="test-provider", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
 
         router.add_provider(provider)
 
@@ -43,8 +45,8 @@ class TestRouter:
         router = Router()
 
         # Add providers
-        local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
+        local = Provider(name="local", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
+        cloud = Provider(name="cloud", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0)
         router.add_provider(local)
         router.add_provider(cloud)
 
@@ -75,7 +77,7 @@ class TestRouter:
         router = Router()
 
         # Add providers
-        provider = Provider(name="default", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        provider = Provider(name="default", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
         router.add_provider(provider)
 
         # Route should return first available provider
@@ -85,7 +87,7 @@ class TestRouter:
         """Test routing with multiple policies."""
         router = Router()
 
-        local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        local = Provider(name="local", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
         router.add_provider(local)
 
         def policy1(request: Request) -> str:
@@ -127,8 +129,8 @@ class TestRouter:
         router = Router()
 
         # Add cloud and local providers
-        cloud = Provider(name="cloud-provider", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
-        local = Provider(name="local-provider", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="cloud-provider", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0)
+        local = Provider(name="local-provider", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
         router.add_provider(cloud)
         router.add_provider(local)
 
@@ -150,8 +152,8 @@ class TestRouter:
         """Test automatic routing for PRIVATE classification."""
         router = Router()
 
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
-        local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="cloud", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0)
+        local = Provider(name="local", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
         router.add_provider(cloud)
         router.add_provider(local)
 
@@ -169,12 +171,12 @@ class TestRouter:
 
     def test_provider_model_field(self):
         """Provider accepts a first-class model field."""
-        p = Provider(name="openai-mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini")
+        p = Provider(name="openai-mini", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0, model="gpt-4o-mini")
         assert p.model == "gpt-4o-mini"
 
     def test_provider_model_defaults_none(self):
         """Existing Provider construction without model field is unaffected."""
-        p = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
+        p = Provider(name="cloud", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0)
         assert p.model is None
 
     def test_provider_model_alongside_metadata(self):
@@ -182,8 +184,8 @@ class TestRouter:
         p = Provider(
             name="openai-mini",
             type="cloud",
-            cost_per_input_token=0.0001,
-            cost_per_output_token=0.0003,
+            cost_per_million_input_token=100.0,
+            cost_per_million_output_token=300.0,
             model="gpt-4o-mini",
             metadata={"vendor": "openai"},
         )
@@ -193,8 +195,8 @@ class TestRouter:
     def test_two_cloud_providers_different_models_are_independent_arms(self):
         """Two providers sharing the same type but different models are distinct routing arms."""
         router = Router()
-        cheap = Provider(name="openai-mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini")
-        expensive = Provider(name="openai-full", type="cloud", cost_per_input_token=0.0002, cost_per_output_token=0.0005, model="gpt-4o")
+        cheap = Provider(name="openai-mini", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0, model="gpt-4o-mini")
+        expensive = Provider(name="openai-full", type="cloud", cost_per_million_input_token=200.0, cost_per_million_output_token=500.0, model="gpt-4o")
         router.add_provider(cheap)
         router.add_provider(expensive)
 
@@ -207,8 +209,8 @@ class TestRouter:
         from aigentic.core.fde import FederatedDecisionEngine
 
         # capability pinned equal so this test isolates cost routing behavior
-        cheap = Provider(name="mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini", capability=0.5)
-        expensive = Provider(name="full", type="cloud", cost_per_input_token=0.0002, cost_per_output_token=0.0005, model="gpt-4o", capability=0.5)
+        cheap = Provider(name="mini", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0, model="gpt-4o-mini", capability=0.5)
+        expensive = Provider(name="full", type="cloud", cost_per_million_input_token=200.0, cost_per_million_output_token=500.0, model="gpt-4o", capability=0.5)
         fde = FederatedDecisionEngine()
 
         selected, score = fde.route({"mini": cheap, "full": expensive}, "What is Python?")
@@ -219,8 +221,8 @@ class TestRouter:
         from aigentic.core.fde import ComplexityLevel, FederatedDecisionEngine, RoutingContext
 
         # capability pinned equal so this test isolates cost scoring behavior
-        cheap = Provider(name="mini", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003, model="gpt-4o-mini", capability=0.5)
-        expensive = Provider(name="full", type="cloud", cost_per_input_token=0.0002, cost_per_output_token=0.0005, model="gpt-4o", capability=0.5)
+        cheap = Provider(name="mini", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0, model="gpt-4o-mini", capability=0.5)
+        expensive = Provider(name="full", type="cloud", cost_per_million_input_token=200.0, cost_per_million_output_token=500.0, model="gpt-4o", capability=0.5)
         fde = FederatedDecisionEngine()
         ctx = RoutingContext(prompt="hi", complexity=ComplexityLevel.SIMPLE, estimated_input_tokens=100, estimated_output_tokens=100)
 
@@ -232,8 +234,8 @@ class TestRouter:
         """Test that explicit mappings override automatic behavior."""
         router = Router()
 
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.0001, cost_per_output_token=0.0003)
-        local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="cloud", type="cloud", cost_per_million_input_token=100.0, cost_per_million_output_token=300.0)
+        local = Provider(name="local", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
         router.add_provider(cloud)
         router.add_provider(local)
 
@@ -247,3 +249,78 @@ class TestRouter:
 
         # Explicit mapping should take precedence
         assert router.route("test") == "cloud"
+
+
+class TestFDEFallback:
+    """FDE automatic fallback when a provider's adapter throws an exception."""
+
+    class _Failing(MockProvider):
+        def generate(self, prompt, **kwargs):
+            raise ConnectionError("simulated API failure")
+
+    def _setup(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cloud = Provider(
+                name="cloud", type="cloud",
+                cost_per_million_input_token=3.0,
+                cost_per_million_output_token=15.0,
+                capability=0.9,
+            )
+            local = Provider(
+                name="local", type="local",
+                cost_per_million_input_token=0.0,
+                cost_per_million_output_token=0.0,
+                capability=0.5,
+            )
+        dio = DIO(
+            use_fde=True,
+            fde_weights={"privacy": 0.40, "cost": 0.20, "capability": 0.30, "latency": 0.10},
+        )
+        dio.add_provider(cloud, adapter=self._Failing(cloud))
+        dio.add_provider(local)
+        return dio
+
+    def test_fde_falls_back_when_top_provider_fails(self):
+        """FDE skips a failing provider and uses the next eligible one."""
+        # Complex query → cloud scores highest, but it fails → local is used
+        r = self._setup().route(
+            "Explain the CAP theorem in distributed systems and compare "
+            "Cassandra vs Spanner vs CockroachDB consistency models."
+        )
+        assert r.provider == "local"
+        assert r.was_fallback is True
+        assert "skipped_providers" in r.metadata
+        assert "cloud" in r.metadata["skipped_providers"]
+
+    def test_fde_fallback_includes_failure_reason(self):
+        r = self._setup().route(
+            "Explain the CAP theorem in distributed systems and compare "
+            "Cassandra vs Spanner vs CockroachDB consistency models."
+        )
+        assert "fallback_reason" in r.metadata
+        assert "simulated API failure" in r.metadata["fallback_reason"]
+
+    def test_fde_raises_when_all_providers_fail(self):
+        """When every eligible provider fails, ValueError is raised."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cloud = Provider(
+                name="cloud-fail", type="cloud",
+                cost_per_million_input_token=3.0,
+                cost_per_million_output_token=15.0,
+                capability=0.9,
+            )
+            local = Provider(
+                name="local-fail", type="local",
+                cost_per_million_input_token=0.0,
+                cost_per_million_output_token=0.0,
+                capability=0.5,
+            )
+        dio = DIO(use_fde=True)
+        dio.add_provider(cloud, adapter=self._Failing(cloud))
+        dio.add_provider(local, adapter=self._Failing(local))
+
+        import pytest
+        with pytest.raises(ValueError, match="All 2 eligible provider"):
+            dio.route("What is Python?")

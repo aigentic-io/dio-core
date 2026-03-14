@@ -47,15 +47,15 @@ print()
 mini = Provider(
     name="llama3-latest",
     type="local",
-    cost_per_input_token=0.00000001,    # ~$0.01/M tokens (electricity)
-    cost_per_output_token=0.00000001,
+    cost_per_million_input_token=0.01,    # ~$0.01/M tokens (electricity)
+    cost_per_million_output_token=0.01,
     model="llama3:latest",
 )
 full = Provider(
     name="gpt-oss-20b",
     type="local",
-    cost_per_input_token=0.00000002,    # ~$0.02/M tokens (larger model, more power)
-    cost_per_output_token=0.00000002,
+    cost_per_million_input_token=0.02,    # ~$0.02/M tokens (larger model, more power)
+    cost_per_million_output_token=0.02,
     model="gpt-oss:20b",
 )
 

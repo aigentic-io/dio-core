@@ -18,11 +18,11 @@ class TestProviderCost:
         provider = Provider(
             name="test",
             type="cloud",
-            cost_per_input_token=0.005,
-            cost_per_output_token=0.02,
+            cost_per_million_input_token=5000.0,
+            cost_per_million_output_token=20000.0,
         )
         cost = provider.estimated_cost(100, 200)
-        expected = 100 * 0.005 + 200 * 0.02
+        expected = 100 * 5000.0 / 1_000_000 + 200 * 20000.0 / 1_000_000
         assert cost == pytest.approx(expected)
 
     def test_cost_property_backward_compat(self):
@@ -30,10 +30,10 @@ class TestProviderCost:
         provider = Provider(
             name="test",
             type="cloud",
-            cost_per_input_token=0.005,
-            cost_per_output_token=0.02,
+            cost_per_million_input_token=5000.0,
+            cost_per_million_output_token=20000.0,
         )
-        expected = 500 * 0.005 + 500 * 0.02
+        expected = 500 * 5000.0 / 1_000_000 + 500 * 20000.0 / 1_000_000
         assert provider.cost == pytest.approx(expected)
 
     def test_free_provider_cost(self):
@@ -41,8 +41,8 @@ class TestProviderCost:
         provider = Provider(
             name="free",
             type="local",
-            cost_per_input_token=0.0,
-            cost_per_output_token=0.0,
+            cost_per_million_input_token=0.0,
+            cost_per_million_output_token=0.0,
         )
         assert provider.estimated_cost(1000, 2000) == 0.0
         assert provider.cost == 0.0
@@ -58,14 +58,14 @@ class TestFDECostScoring:
         cheap = Provider(
             name="cheap",
             type="local",
-            cost_per_input_token=0.000001,
-            cost_per_output_token=0.000002,
+            cost_per_million_input_token=1.0,
+            cost_per_million_output_token=2.0,
         )
         expensive = Provider(
             name="expensive",
             type="cloud",
-            cost_per_input_token=0.00005,
-            cost_per_output_token=0.00015,
+            cost_per_million_input_token=50.0,
+            cost_per_million_output_token=150.0,
         )
 
         context = RoutingContext(
@@ -96,8 +96,8 @@ class TestFDECostScoring:
         free = Provider(
             name="free",
             type="local",
-            cost_per_input_token=0.0,
-            cost_per_output_token=0.0,
+            cost_per_million_input_token=0.0,
+            cost_per_million_output_token=0.0,
         )
 
         context = RoutingContext(
@@ -134,15 +134,15 @@ class TestFDECapabilityScoring:
         strong = Provider(
             name="strong-cloud",
             type="cloud",
-            cost_per_input_token=0.0004,
-            cost_per_output_token=0.0008,
+            cost_per_million_input_token=400.0,
+            cost_per_million_output_token=800.0,
             capability=0.9,
         )
         weak = Provider(
             name="weak-cloud",
             type="cloud",
-            cost_per_input_token=0.0004,
-            cost_per_output_token=0.0008,
+            cost_per_million_input_token=400.0,
+            cost_per_million_output_token=800.0,
             capability=0.6,
         )
 

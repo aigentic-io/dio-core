@@ -6,6 +6,7 @@ from aigentic.core.fde import FederatedDecisionEngine
 from aigentic.core.provider import MockProvider, Provider, ProviderAdapter
 from aigentic.core.response import Response
 from aigentic.core.router import Policy, Router
+from aigentic.registry import start as _registry_start
 
 
 class DIO:
@@ -34,6 +35,9 @@ class DIO:
         self.adapters: Dict[str, ProviderAdapter] = {}
         self.fallback_config: Optional[Dict] = None
         self.providers: Dict[str, Provider] = {}
+
+        # Start registry background sync (CDN → Redis → memory). No-op if already running.
+        _registry_start()
 
         # Initialize FDE if enabled
         if use_fde:
@@ -126,55 +130,76 @@ class DIO:
         Returns:
             Response object with the result
         """
-        # Determine which provider to use
         if self.use_fde:
-            # Use Federated Decision Engine
-            provider_name, routing_score = self.fde.route(
-                self.providers,
-                prompt,
-                **kwargs
+            # FDE mode: score all eligible providers, try in order until one succeeds.
+            # This provides automatic resilience — a provider that throws (auth error,
+            # rate limit, timeout) is skipped and the next-best is tried instead.
+            # AIgentic Premium DIO extends this with real-time health scoring so
+            # degraded providers are deprioritized before they fail.
+            all_scores = self.fde.score_all(self.providers, prompt, **kwargs)
+            if not all_scores:
+                raise ValueError("No eligible provider found for this request")
+
+            failed: list[dict] = []
+            for routing_score in all_scores:
+                provider_name = routing_score.provider_name
+                try:
+                    content = self.adapters[provider_name].generate(prompt, **kwargs)
+                    metadata = {
+                        "routing_mode": "fde",
+                        "score": routing_score.score,
+                        "privacy_score": routing_score.privacy_score,
+                        "cost_score": routing_score.cost_score,
+                        "capability_score": routing_score.capability_score,
+                        "latency_score": routing_score.latency_score,
+                        "estimated_cost": routing_score.estimated_cost,
+                        "reason": routing_score.reason,
+                    }
+                    if failed:
+                        metadata["skipped_providers"] = [f["provider"] for f in failed]
+                        metadata["fallback_reason"] = failed[0]["error"]
+                    return Response(
+                        content=content,
+                        provider=provider_name,
+                        was_fallback=bool(failed),
+                        metadata=metadata,
+                    )
+                except Exception as e:
+                    failed.append({"provider": provider_name, "error": str(e)})
+
+            raise ValueError(
+                f"All {len(failed)} eligible provider(s) failed. "
+                f"Tried: {', '.join(f['provider'] for f in failed)}"
             )
-            metadata = {
-                "routing_mode": "fde",
-                "score": routing_score.score,
-                "privacy_score": routing_score.privacy_score,
-                "cost_score": routing_score.cost_score,
-                "capability_score": routing_score.capability_score,
-                "latency_score": routing_score.latency_score,
-                "estimated_cost": routing_score.estimated_cost,
-                "reason": routing_score.reason,
-            }
         else:
-            # Use simple policy-based router
+            # Policy mode: route to a single provider; use set_fallback() for resilience.
             provider_name = self.router.route(prompt)
             metadata = {
                 "routing_mode": "policy",
                 "classification": self.router.classification,
             }
 
-        if provider_name is None:
-            raise ValueError("No suitable provider found for this request")
+            if provider_name is None:
+                raise ValueError("No suitable provider found for this request")
 
-        # Try to get response from the selected provider
-        was_fallback = False
-
-        try:
-            adapter = self.adapters[provider_name]
-            content = adapter.generate(prompt, **kwargs)
-        except Exception as e:
-            # Check if fallback is configured and this exception triggers it
-            if self.fallback_config and isinstance(e, self.fallback_config["trigger"]):
-                provider_name = self.fallback_config["fallback"]
-                adapter = self.adapters[provider_name]
-                content = adapter.generate(prompt, **kwargs)
-                was_fallback = True
-                metadata["fallback_reason"] = str(e)
-            else:
+            try:
+                content = self.adapters[provider_name].generate(prompt, **kwargs)
+            except Exception as e:
+                if self.fallback_config and isinstance(e, self.fallback_config["trigger"]):
+                    provider_name = self.fallback_config["fallback"]
+                    content = self.adapters[provider_name].generate(prompt, **kwargs)
+                    metadata["fallback_reason"] = str(e)
+                    return Response(
+                        content=content,
+                        provider=provider_name,
+                        was_fallback=True,
+                        metadata=metadata,
+                    )
                 raise
 
-        return Response(
-            content=content,
-            provider=provider_name,
-            was_fallback=was_fallback,
-            metadata=metadata,
-        )
+            return Response(
+                content=content,
+                provider=provider_name,
+                was_fallback=False,
+                metadata=metadata,
+            )

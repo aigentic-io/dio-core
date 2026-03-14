@@ -190,9 +190,53 @@ class FederatedDecisionEngine:
             capability_score=capability_score,
             latency_score=latency_score,
             eligible=True,
-            reason=f"Optimal for {context.complexity.value} complexity queries",
+            reason=self._build_reason(provider, context, cost_score, capability_score),
             estimated_cost=estimated_cost,
         )
+
+    def _build_reason(
+        self,
+        provider: Provider,
+        context: RoutingContext,
+        cost_score: float,
+        capability_score: float,
+    ) -> str:
+        """Build a human-readable routing reason for the winning provider."""
+        # Privacy / local override takes top priority in the explanation
+        if context.has_pii:
+            return (
+                f"Privacy-approved {provider.type} provider — PII detected, "
+                "prompt kept off cloud"
+            )
+        if context.require_local:
+            return "Local provider required — data sovereignty constraint"
+
+        # Identify primary driver from weighted contributions (privacy excluded —
+        # it's 100 for all eligible providers at this point).
+        cost_contrib = cost_score * self.weights["cost"]
+        cap_contrib = capability_score * self.weights["capability"]
+
+        # Describe cost tier
+        if cost_score >= 99:
+            cost_label = f"free {provider.type}"
+        elif cost_score >= 75:
+            cost_label = f"low-cost {provider.type}"
+        else:
+            cost_label = f"{provider.type}"
+
+        cap_pct = f"{provider.capability:.0%}"
+
+        if context.complexity == ComplexityLevel.COMPLEX:
+            cap_label = f"high capability ({cap_pct}) for complex reasoning"
+        elif context.complexity == ComplexityLevel.SIMPLE:
+            cap_label = f"sufficient capability ({cap_pct}) for simple queries"
+        else:
+            cap_label = f"capability ({cap_pct}) matched for moderate queries"
+
+        # Lead with whichever factor contributes more to the final score
+        if cap_contrib >= cost_contrib:
+            return f"{cost_label.capitalize()} provider — {cap_label}"
+        return f"{cost_label.capitalize()} provider — cost-efficient, {cap_label}"
 
     def _score_privacy(self, provider: Provider, context: RoutingContext) -> float:
         """Score privacy compliance.
@@ -313,34 +357,15 @@ class FederatedDecisionEngine:
         latency_ratio = min(estimated_latency_ms / max_acceptable_latency, 1.0)
         return (1.0 - latency_ratio) * 100
 
-    def route(
-        self,
-        providers: Dict[str, Provider],
-        prompt: str,
-        **kwargs
-    ) -> tuple[str, RoutingScore]:
-        """Execute FDE routing algorithm.
-
-        Args:
-            providers: Available providers
-            prompt: User prompt
-            **kwargs: Additional routing parameters
-
-        Returns:
-            Tuple of (selected_provider_name, routing_score)
-        """
-        # Analyze prompt
+    def _build_context(self, prompt: str, **kwargs) -> RoutingContext:
+        """Build a RoutingContext from a prompt and routing kwargs."""
         has_pii = PIIDetector.has_pii(prompt)
         complexity = self.analyze_complexity(prompt)
-
-        # Estimate token counts
         estimated_input_tokens = len(prompt.split())
         estimated_output_tokens = self._estimate_output_tokens(
             estimated_input_tokens, complexity
         )
-
-        # Build routing context
-        context = RoutingContext(
+        return RoutingContext(
             prompt=prompt,
             has_pii=has_pii,
             complexity=complexity,
@@ -351,16 +376,48 @@ class FederatedDecisionEngine:
             estimated_output_tokens=estimated_output_tokens,
         )
 
-        # Score all providers
-        scores = []
-        for provider in providers.values():
-            score = self.score_provider(provider, context)
-            if score.eligible:
-                scores.append(score)
+    def score_all(
+        self,
+        providers: Dict[str, Provider],
+        prompt: str,
+        **kwargs
+    ) -> List[RoutingScore]:
+        """Score all providers and return eligible ones sorted by score (best first).
 
+        Args:
+            providers: Available providers
+            prompt: User prompt
+            **kwargs: Routing hints (max_cost, max_latency_ms, require_local)
+
+        Returns:
+            Eligible RoutingScores sorted descending by overall score
+        """
+        context = self._build_context(prompt, **kwargs)
+        scores = [self.score_provider(p, context) for p in providers.values()]
+        return sorted(
+            (s for s in scores if s.eligible),
+            key=lambda s: s.score,
+            reverse=True,
+        )
+
+    def route(
+        self,
+        providers: Dict[str, Provider],
+        prompt: str,
+        **kwargs
+    ) -> tuple[str, RoutingScore]:
+        """Return the single best eligible provider.
+
+        Args:
+            providers: Available providers
+            prompt: User prompt
+            **kwargs: Additional routing parameters
+
+        Returns:
+            Tuple of (selected_provider_name, routing_score)
+        """
+        scores = self.score_all(providers, prompt, **kwargs)
         if not scores:
             raise ValueError("No eligible provider found for the given constraints")
-
-        # Select provider with highest score
-        best_score = max(scores, key=lambda s: s.score)
-        return best_score.provider_name, best_score
+        best = scores[0]
+        return best.provider_name, best

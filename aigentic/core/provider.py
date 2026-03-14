@@ -13,8 +13,8 @@ class Provider:
     Attributes:
         name: Unique identifier for the provider
         type: Provider type (e.g., "cloud", "local")
-        cost_per_input_token: Cost in USD per input token (e.g. 0.0000025 for gpt-4o at $2.50/M)
-        cost_per_output_token: Cost in USD per output token (e.g. 0.00001 for gpt-4o at $10/M)
+        cost_per_million_input_token: Cost in USD per million input tokens (e.g. 2.5 for gpt-4o at $2.50/M)
+        cost_per_million_output_token: Cost in USD per million output tokens (e.g. 10.0 for gpt-4o at $10/M)
         capability: Model capability level (0.0-1.0). When omitted and model= is
             set, auto-looked up from the LMSYS Arena ELO registry; falls back to 1.0
             for unknown models. Pass explicitly to override the registry value.
@@ -28,8 +28,9 @@ class Provider:
     """
     name: str
     type: str
-    cost_per_input_token: float = 0.0
-    cost_per_output_token: float = 0.0
+    cost_per_million_input_token: float = 0.0
+    cost_per_million_output_token: float = 0.0
+    cache_read_cost_per_million_token: Optional[float] = None
     capability: Optional[float] = None
     model: Optional[str] = None
     latency_ms: Optional[int] = None
@@ -40,6 +41,7 @@ class Provider:
             self.metadata = {}
         if self.capability is None:
             self._resolve_capability()
+        self._resolve_cost()
 
     def _resolve_capability(self) -> None:
         """Auto-populate capability from the LMSYS Arena ELO registry when model= is set."""
@@ -64,6 +66,40 @@ class Provider:
                 stacklevel=4,
             )
 
+    def _resolve_cost(self) -> None:
+        """Auto-populate costs from the dio-registry CDN when model= is set and no cost is given.
+
+        Registry values are in $/M tokens and are assigned directly without conversion.
+        Silently skips when the registry has not yet synced (get_pricing returns None).
+        """
+        if self.type != "cloud" or not self.model or self.cost_per_million_input_token != 0.0:
+            return
+
+        from aigentic.registry.client import get_pricing
+        plan = get_pricing(self.model, modality="text")
+        if plan is None:
+            return
+
+        base = plan.get("base", {})
+        input_price = base.get("input")
+        output_price = base.get("output")
+        if input_price is None or output_price is None:
+            return
+
+        self.cost_per_million_input_token = input_price
+        self.cost_per_million_output_token = output_price
+        cache_read = plan.get("caching", {}).get("read")
+        if cache_read is not None:
+            self.cache_read_cost_per_million_token = cache_read
+
+        warnings.warn(
+            f"Provider '{self.name}': costs auto-loaded from dio-registry "
+            f"(${input_price:.4f}/M input, ${output_price:.4f}/M output). "
+            f"Override with cost_per_million_input_token=... in Provider() for custom pricing.",
+            UserWarning,
+            stacklevel=4,
+        )
+
     def estimated_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Estimate the cost for a request with the given token counts.
 
@@ -74,8 +110,10 @@ class Provider:
         Returns:
             Estimated cost
         """
-        return (input_tokens * self.cost_per_input_token +
-                output_tokens * self.cost_per_output_token)
+        return (
+            input_tokens * self.cost_per_million_input_token / 1_000_000
+            + output_tokens * self.cost_per_million_output_token / 1_000_000
+        )
 
     @property
     def cost(self) -> float:

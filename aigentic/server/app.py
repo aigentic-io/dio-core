@@ -18,9 +18,11 @@ Request headers (consumed server-side, not in the request body):
     X-Request-ID: <uuid>             — per-request trace ID (echoed in response)
 """
 
+import asyncio
 import json
 import logging
 import os
+import threading
 import warnings
 
 try:
@@ -38,6 +40,7 @@ except ImportError as exc:
     ) from exc
 
 from aigentic.core import DIO, Provider
+from aigentic.registry import sync_registry
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Bare format — we emit NDJSON ourselves so log aggregators can parse each line.
@@ -57,6 +60,11 @@ def _build_dio() -> DIO:
     runs on the device itself. Capabilities auto-loaded from the model registry.
     Cloud providers are only added when their API key is present.
     """
+    # sync_registry must run outside any running event loop (uvicorn already has one)
+    t = threading.Thread(target=lambda: asyncio.run(sync_registry()), daemon=True)
+    t.start()
+    t.join(timeout=30)
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
 
@@ -88,7 +96,6 @@ def _build_dio() -> DIO:
                 from aigentic.providers.openai import OpenAIProvider
                 p = Provider(
                     name="gpt-4o", type="cloud",
-                    cost_per_input_token=0.0000025, cost_per_output_token=0.00001,
                     model="gpt-4o",
                 )
                 dio.add_provider(p, adapter=OpenAIProvider(p, api_key=openai_key))
@@ -101,7 +108,6 @@ def _build_dio() -> DIO:
                 from aigentic.providers.claude import ClaudeProvider
                 p = Provider(
                     name="claude-haiku", type="cloud",
-                    cost_per_input_token=0.0000008, cost_per_output_token=0.000004,
                     model="claude-3-5-haiku-20241022",
                 )
                 dio.add_provider(p, adapter=ClaudeProvider(p, api_key=anthropic_key))
@@ -114,7 +120,6 @@ def _build_dio() -> DIO:
                 from aigentic.providers.gemini import GeminiProvider
                 p = Provider(
                     name="gemini-flash", type="cloud",
-                    cost_per_input_token=0.0000001, cost_per_output_token=0.0000004,
                     model="gemini-2.0-flash",
                 )
                 dio.add_provider(p, adapter=GeminiProvider(p, api_key=google_key))
@@ -127,8 +132,8 @@ def _build_dio() -> DIO:
                 from aigentic.providers.webhost import WebhostProvider
                 p = Provider(
                     name="ollama-local", type="local",
-                    cost_per_input_token=0.00000001, cost_per_output_token=0.00000001,
-                    model="llama3:latest",
+                    cost_per_million_input_token=0.01, cost_per_million_output_token=0.01,
+                    model="llama3.1:8b", latency_ms=1000,
                 )
                 dio.add_provider(p, adapter=WebhostProvider(p, base_url=ollama_url))
             except Exception as e:

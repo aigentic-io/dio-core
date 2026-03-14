@@ -108,8 +108,8 @@ def list_providers(request: Request, _=Depends(_check_auth)):
             "model": p.model,
             "capability": p.capability,
             "latency_ms": p.latency_ms,
-            "cost_per_input_token": p.cost_per_input_token,
-            "cost_per_output_token": p.cost_per_output_token,
+            "cost_per_million_input_token": p.cost_per_million_input_token,
+            "cost_per_million_output_token": p.cost_per_million_output_token,
         }
         for name, p in dio.providers.items()
     ]

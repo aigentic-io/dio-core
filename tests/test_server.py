@@ -34,7 +34,7 @@ def test_dio():
         ))
         dio.add_provider(Provider(
             name="cloud-mock", type="cloud",
-            cost_per_input_token=0.000003, cost_per_output_token=0.000003,
+            cost_per_million_input_token=3.0, cost_per_million_output_token=3.0,
             model="test-cloud", capability=0.9,
         ))
     app.state.dio = dio
@@ -66,7 +66,7 @@ def test_providers_list(client):
     assert "local-mock" in providers
     assert "cloud-mock" in providers
     assert providers["local-mock"]["type"] == "local"
-    assert providers["cloud-mock"]["cost_per_input_token"] == pytest.approx(0.000003)
+    assert providers["cloud-mock"]["cost_per_million_input_token"] == pytest.approx(3.0)
 
 
 # ── /infer — request structure ────────────────────────────────────────────────
