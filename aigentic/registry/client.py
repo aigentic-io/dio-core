@@ -23,6 +23,7 @@ _REDIS_KEY = "dio:registry:models"
 _SYNC_HOUR = int(os.getenv("REGISTRY_SYNC_HOUR", "3"))
 
 _memory_cache: Optional[dict] = None
+_write_lock = threading.Lock()
 _redis_client = None
 _bg_thread: Optional[threading.Thread] = None
 
@@ -104,7 +105,8 @@ async def sync_registry() -> None:
             "reason": "cdn_fetch_failed — existing data retained",
         }))
         return
-    _memory_cache = data
+    with _write_lock:
+        _memory_cache = data
     _redis_write(data)
     logger.info(json.dumps({
         "event": "registry_synced",
@@ -118,7 +120,8 @@ async def _startup() -> None:
     data = _redis_read()
     if data:
         global _memory_cache
-        _memory_cache = data
+        with _write_lock:
+            _memory_cache = data
         logger.info(json.dumps({"event": "registry_loaded_from_redis", "model_count": len(data.get("models", {}))}))
     else:
         await sync_registry()
