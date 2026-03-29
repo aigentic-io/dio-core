@@ -164,7 +164,7 @@ class DIO:
                         was_fallback=bool(failed),
                         metadata=metadata,
                     )
-                except Exception as e:
+                except (OSError, TimeoutError, ValueError, RuntimeError) as e:
                     failed.append({"provider": provider_name, "error": str(e)})
 
             raise ValueError(

@@ -41,6 +41,7 @@ except ImportError as exc:
 
 from aigentic.core import DIO, Provider
 from aigentic.registry import sync_registry
+import aigentic.registry.client as _registry_client
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Bare format — we emit NDJSON ourselves so log aggregators can parse each line.
@@ -60,10 +61,16 @@ def _build_dio() -> DIO:
     runs on the device itself. Capabilities auto-loaded from the model registry.
     Cloud providers are only added when their API key is present.
     """
-    # sync_registry must run outside any running event loop (uvicorn already has one)
+    # sync_registry must run outside any running event loop (uvicorn already has one).
+    # Wait up to 30s for real pricing data; abort startup if registry fails to load.
     t = threading.Thread(target=lambda: asyncio.run(sync_registry()), daemon=True)
     t.start()
     t.join(timeout=30)
+    if t.is_alive() or _registry_client._memory_cache is None:
+        raise RuntimeError(
+            "Registry failed to load within 30s — cannot start server without pricing data. "
+            "Check CDN connectivity or set REDIS_URL to use a cached registry."
+        )
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
