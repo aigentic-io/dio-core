@@ -70,7 +70,8 @@ class Provider:
         """Auto-populate costs from the dio-registry CDN when model= is set and no cost is given.
 
         Registry values are in $/M tokens and are assigned directly without conversion.
-        Silently skips when the registry has not yet synced (get_pricing returns None).
+        Warns when the registry has not yet synced or the model is unknown, as the provider
+        will be treated as free (cost_score=100) until costs are resolved.
         """
         if self.type != "cloud" or not self.model or self.cost_per_million_input_token != 0.0:
             return
@@ -78,6 +79,15 @@ class Provider:
         from aigentic.registry.client import get_pricing
         plan = get_pricing(self.model, modality="text")
         if plan is None:
+            warnings.warn(
+                f"Provider '{self.name}': cost for model '{self.model}' could not be resolved "
+                f"(registry not yet synced or model unknown). Defaulting to $3.00/M input, $12.00/M output — "
+                f"set cost_per_million_input_token=... explicitly to suppress this warning.",
+                UserWarning,
+                stacklevel=4,
+            )
+            self.cost_per_million_input_token = 3.0
+            self.cost_per_million_output_token = 12.0
             return
 
         base = plan.get("base", {})
