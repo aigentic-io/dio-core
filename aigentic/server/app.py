@@ -39,9 +39,9 @@ except ImportError as exc:
         "Install it with: pip install aigentic[server]"
     ) from exc
 
+import aigentic.registry.client as _registry_client
 from aigentic.core import DIO, Provider
 from aigentic.registry import sync_registry
-import aigentic.registry.client as _registry_client
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Bare format — we emit NDJSON ourselves so log aggregators can parse each line.
