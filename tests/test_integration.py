@@ -11,8 +11,8 @@ class TestDIOIntegration:
     def test_basic_setup(self):
         """Test basic DIO setup from workshop slides (Slide 10)."""
         # Setup from slides
-        cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-        local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="bedrock", type="cloud", cost_per_million_input_token=10000.0, cost_per_million_output_token=30000.0)
+        local = Provider(name="vllm-secure", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
 
         dio = DIO()
         dio.add_provider(cloud)
@@ -25,8 +25,8 @@ class TestDIOIntegration:
     def test_privacy_policy_routing(self):
         """Test privacy policy routing from workshop slides (Slide 11)."""
         # Setup
-        cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-        local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="bedrock", type="cloud", cost_per_million_input_token=10000.0, cost_per_million_output_token=30000.0)
+        local = Provider(name="vllm-secure", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
 
         dio = DIO()
         dio.add_provider(cloud)
@@ -55,8 +55,8 @@ class TestDIOIntegration:
 
     def test_fallback_configuration(self):
         """Test fallback configuration from workshop slides (Slide 13)."""
-        cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-        local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="bedrock", type="cloud", cost_per_million_input_token=10000.0, cost_per_million_output_token=30000.0)
+        local = Provider(name="vllm-secure", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
 
         dio = DIO()
         dio.add_provider(cloud)
@@ -89,7 +89,7 @@ class TestDIOIntegration:
 
     def test_response_metadata(self):
         """Test that responses include proper metadata."""
-        cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
+        cloud = Provider(name="bedrock", type="cloud", cost_per_million_input_token=10000.0, cost_per_million_output_token=30000.0)
 
         dio = DIO()
         dio.add_provider(cloud)
@@ -103,8 +103,8 @@ class TestDIOIntegration:
 
     def test_multiple_pii_types(self):
         """Test routing with multiple PII types in one request."""
-        cloud = Provider(name="cloud", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-        local = Provider(name="local", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="cloud", type="cloud", cost_per_million_input_token=10000.0, cost_per_million_output_token=30000.0)
+        local = Provider(name="local", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
 
         dio = DIO()
         dio.add_provider(cloud)
@@ -132,8 +132,8 @@ class TestDIOIntegration:
         from aigentic.core.pii_detector import has_pii
 
         # Setup providers
-        cloud = Provider(name="bedrock", type="cloud", cost_per_input_token=0.01, cost_per_output_token=0.03)
-        local = Provider(name="vllm-secure", type="local", cost_per_input_token=0.0, cost_per_output_token=0.0)
+        cloud = Provider(name="bedrock", type="cloud", cost_per_million_input_token=10000.0, cost_per_million_output_token=30000.0)
+        local = Provider(name="vllm-secure", type="local", cost_per_million_input_token=0.0, cost_per_million_output_token=0.0)
 
         # Initialize DIO
         dio = DIO()

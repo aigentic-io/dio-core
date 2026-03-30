@@ -18,6 +18,7 @@ Setup:
     python3 examples/cloud_models.py
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ except ImportError:
     pass
 
 from aigentic.core import DIO, Provider
+from aigentic.registry import sync_registry
 
 try:
     from aigentic.providers.gemini import GeminiProvider
@@ -52,16 +54,12 @@ def demo_single_gemini_api_key(gemini_key):
     mini = Provider(
         name="gemini-2.0-flash-lite",
         type="cloud",
-        cost_per_input_token=0.000000075,   # $0.075/M tokens
-        cost_per_output_token=0.0000003,    # $0.30/M tokens
         model="gemini-2.0-flash-lite",
         metadata={"vendor": "google"},
     )
     full = Provider(
         name="gemini-2.0-flash",
         type="cloud",
-        cost_per_input_token=0.0000001,     # $0.10/M tokens
-        cost_per_output_token=0.0000004,    # $0.40/M tokens
         model="gemini-2.0-flash",
         metadata={"vendor": "google"},
     )
@@ -111,16 +109,12 @@ def demo_single_openai_api_key(openai_key):
     mini = Provider(
         name="openai-gpt4o-mini",
         type="cloud",
-        cost_per_input_token=0.00000015,    # $0.15/M tokens
-        cost_per_output_token=0.0000006,    # $0.60/M tokens
         model="gpt-4o-mini",
         metadata={"vendor": "openai"},
     )
     full = Provider(
         name="openai-gpt4o",
         type="cloud",
-        cost_per_input_token=0.0000025,     # $2.50/M tokens
-        cost_per_output_token=0.00001,      # $10/M tokens
         model="gpt-4o",
         metadata={"vendor": "openai"},
     )
@@ -174,6 +168,8 @@ def _run_scenarios(dio, scenarios):
 
 
 def main():
+    asyncio.run(sync_registry())  # populate pricing cache before Provider creation
+
     gemini_key = os.getenv("GOOGLE_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
 

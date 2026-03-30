@@ -53,25 +53,23 @@ except ImportError:
 
 gemini_nano = Provider(
     name="gemini-nano", type="local",
-    cost_per_input_token=0.0, cost_per_output_token=0.0,
+    cost_per_million_input_token=0.0, cost_per_million_output_token=0.0,
     capability=0.35, latency_ms=50,
     model="gemini-nano",       # Pixel 9 AICore — on-device, offline-capable
 )
 phi_mini = Provider(
     name="phi-3-mini", type="local",
-    cost_per_input_token=0.0, cost_per_output_token=0.0,
+    cost_per_million_input_token=0.0, cost_per_million_output_token=0.0,
     capability=0.28, latency_ms=120,
     model="phi-3-mini",        # mid-range Android — smaller on-device model
 )
 gemini_flash = Provider(
     name="gemini-flash", type="cloud",
-    cost_per_input_token=0.0000001, cost_per_output_token=0.0000004,
     capability=0.70, latency_ms=300,
     model="gemini-2.0-flash",  # cost-effective cloud
 )
 gpt4o = Provider(
     name="gpt-4o", type="cloud",
-    cost_per_input_token=0.0000025, cost_per_output_token=0.00001,
     capability=0.95, latency_ms=800,
     model="gpt-4o",            # frontier reasoning
 )
@@ -134,7 +132,7 @@ print(f"  {'Provider':<16}  {'Type':<7}  {'Capability':>10}  {'Latency':>9}  {'C
 print(f"  {'-'*16}  {'-'*7}  {'-'*10}  {'-'*9}  {'-'*10}")
 for p in [gemini_nano, phi_mini, gemini_flash, gpt4o]:
     latency = f"{p.latency_ms}ms" if p.latency_ms else "~800ms"
-    cost = "$0 (electricity)" if p.cost_per_input_token == 0 else f"${p.cost_per_input_token:.7f}/tok"
+    cost = "$0 (electricity)" if p.cost_per_million_input_token == 0 else f"${p.cost_per_million_input_token:.4f}/M tok"
     print(f"  {p.name:<16}  {p.type:<7}  {p.capability:>10.2f}  {latency:>9}  {cost}")
 live = []
 if openai_key: live.append("OpenAI")

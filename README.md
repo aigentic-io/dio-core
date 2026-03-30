@@ -522,59 +522,82 @@ python3 -m pytest tests/test_pii.py -v
 dio-core/
 ├── aigentic/
 │   ├── core/
-│   │   ├── dio.py              # Main DIO class (2 modes: policy + FDE)
+│   │   ├── dio.py              # Main DIO class (policy + FDE modes)
 │   │   ├── fde.py              # Federated Decision Engine
-│   │   ├── provider.py         # Provider abstraction
+│   │   ├── provider.py         # Provider dataclass + MockProvider
 │   │   ├── pii_detector.py     # Privacy-first PII detection
 │   │   ├── router.py           # Policy-based routing
 │   │   └── response.py         # Response dataclass
+│   ├── data/
+│   │   └── model_capabilities.json  # LMSYS ELO registry (normalized 0–1)
+│   ├── model_registry.py       # Capability + cost lookup (4-step matching)
 │   ├── policies/
-│   │   ├── privacy.py          # Privacy policy
+│   │   ├── privacy.py          # Privacy policy helpers
 │   │   └── fallback.py         # Fallback policy
-│   └── providers/
-│       ├── openai.py           # OpenAI integration
-│       ├── gemini.py           # Google Gemini
-│       ├── claude.py           # Anthropic Claude
-│       ├── ollama.py           # Local Ollama
-│       └── mock.py             # Testing/workshop
+│   ├── providers/
+│   │   ├── openai.py           # OpenAI adapter
+│   │   ├── gemini.py           # Google Gemini adapter
+│   │   ├── claude.py           # Anthropic Claude adapter
+│   │   ├── webhost.py          # Generic HTTP adapter (Ollama, vLLM, etc.)
+│   │   ├── ollama.py           # Ollama-specific adapter
+│   │   └── mock.py             # Mock adapter for testing
+│   ├── registry/
+│   │   ├── client.py           # CDN fetch + Redis + in-memory pricing cache
+│   │   └── __init__.py         # Exports: get_pricing, start, sync_registry
+│   └── server/
+│       ├── app.py              # FastAPI app + DIO initialization
+│       ├── routes.py           # /health, /providers, /infer endpoints
+│       ├── models.py           # Pydantic request/response models
+│       └── device_context.py   # ClientContext (battery, connectivity, platform)
 ├── examples/
-│   ├── quickstart.py           # Workshop quickstart (Exercises 1-3)
-│   ├── workshop_setup.py       # Auto-detect & configure providers
-│   └── workshop_real_providers.py  # Real cloud API integration
+│   ├── quickstart.py           # Workshop quickstart (Exercises 1–3)
+│   ├── cloud_models.py         # Model-tier routing (cheap vs frontier, 1 API key)
+│   ├── hybrid_models.py        # Multi-provider FDE (cloud + local)
+│   ├── private_models.py       # Local-only routing (Ollama, two model sizes)
+│   └── android_demo.py         # Android on-device + cloud routing demo
 ├── tests/
 │   ├── test_pii.py             # PII detection tests
-│   ├── test_router.py          # Routing logic tests
+│   ├── test_router.py          # Policy routing tests
 │   ├── test_integration.py     # End-to-end integration tests
-│   └── test_cost.py            # Per-token cost model tests
+│   ├── test_cost.py            # Per-million-token cost model tests
+│   ├── test_providers.py       # Provider adapter tests
+│   ├── test_registry.py        # Registry CDN client tests
+│   ├── test_server.py          # FastAPI endpoint tests
+│   └── test_examples_smoke.py  # Routing smoke tests mirroring each example
 ├── pyproject.toml
 ├── requirements.txt
-├── setup.py
-└── README.md
+└── setup.py
 ```
 
 ### How It Works
 
-1. **Request** → User submits prompt
-2. **Policy Evaluation** → All policies evaluate the request
-3. **Classification** → Request classified (e.g., RESTRICTED, SIMPLE, COMPLEX)
-4. **Provider Selection** → Router selects best provider based on classification
-5. **Execution** → Provider adapter generates response
-6. **Response** → User receives result with metadata
+1. **Startup** → `sync_registry()` fetches pricing from the [dio-registry](https://github.com/aigentic-io/dio-registry) CDN
+2. **Provider creation** → `capability` and `cost` auto-resolved from registries; explicit values override
+3. **Request** → User submits prompt (policy mode) or API call to `/infer` (server mode)
+4. **FDE scoring** → Each provider scored across privacy, cost, capability, and latency
+5. **Provider selection** → Highest-scoring eligible provider is chosen
+6. **Execution** → Provider adapter generates response; fallback triggered on error
+7. **Response** → Result returned with provider, classification, and score metadata
 
 ### FDE Algorithm
 
-The Federated Decision Engine scores each provider across 4 factors:
+The Federated Decision Engine scores each provider across 4 weighted factors:
 
 ```python
 overall_score = (
-    privacy_score * 0.40 +      # PII detection, local preference
-    cost_score * 0.25 +          # Per-token cost (input + output rates)
-    capability_score * 0.25 +    # Model capability vs complexity
-    latency_score * 0.10         # Response time
+    privacy_score * weight["privacy"] +     # Hard constraint: PII → local only
+    cost_score * weight["cost"] +           # Log-scale: free=100, $1/req≈40
+    capability_score * weight["capability"] + # Goldilocks for simple; max for complex
+    latency_score * weight["latency"]       # Derived from latency_ms or capability
 )
 ```
 
-Cost scoring uses per-token input/output rates with estimated token counts based on prompt length and complexity. Capability scoring uses each provider's `capability` field (0.0-1.0) to differentiate models of the same type — e.g., GPT-4o-mini (0.8) vs Gemini Flash (0.6). **Provider with highest score wins.**
+Default weights (configurable per deployment): `privacy=0.40, cost=0.20, capability=0.30, latency=0.10`.
+
+- **Cost** is scored on a log scale — each 10× cost increase costs ~20 points. Free providers always score 100.
+- **Capability** uses "Goldilocks" scoring for simple queries (over-powered models penalized) and raw capability for complex queries.
+- **Latency** uses measured `latency_ms` if set, otherwise estimated from model size for local providers.
+- **Provider with highest score wins.** Privacy violations return a score of 0 (hard exclusion).
 
 ---
 

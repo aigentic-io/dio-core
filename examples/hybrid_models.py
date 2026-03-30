@@ -26,6 +26,7 @@ Setup:
     python3 examples/hybrid_models.py
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -41,6 +42,7 @@ except ImportError:
     pass
 
 from aigentic.core import DIO, Provider
+from aigentic.registry import sync_registry
 from aigentic.providers.openai import OpenAIProvider
 from aigentic.providers.gemini import GeminiProvider
 from aigentic.providers.claude import ClaudeProvider
@@ -56,8 +58,6 @@ def demo_multi_provider(openai_key, google_key, claude_key, ollama_url=None):
     openai_provider = Provider(
         name="openai-gpt4o",
         type="cloud",
-        cost_per_input_token=0.0000025,     # $2.50/M tokens
-        cost_per_output_token=0.00001,      # $10/M tokens
         model="gpt-4o",
         metadata={"vendor": "openai"},
     )
@@ -65,8 +65,6 @@ def demo_multi_provider(openai_key, google_key, claude_key, ollama_url=None):
     gemini_provider = Provider(
         name="gemini-2.0-flash",
         type="cloud",
-        cost_per_input_token=0.0000001,     # $0.10/M tokens
-        cost_per_output_token=0.0000004,    # $0.40/M tokens
         model="gemini-2.0-flash",
         metadata={"vendor": "google"},
     )
@@ -74,8 +72,6 @@ def demo_multi_provider(openai_key, google_key, claude_key, ollama_url=None):
     claude_provider = Provider(
         name="claude-3-5-haiku",
         type="cloud",
-        cost_per_input_token=0.0000008,     # $0.80/M tokens
-        cost_per_output_token=0.000004,     # $4/M tokens
         model="claude-3-5-haiku-20241022",
         metadata={"vendor": "anthropic"},
     )
@@ -83,18 +79,18 @@ def demo_multi_provider(openai_key, google_key, claude_key, ollama_url=None):
     local_provider = Provider(
         name="ollama-llama3",
         type="local",
-        cost_per_input_token=0.0,
-        cost_per_output_token=0.0,
+        cost_per_million_input_token=0.0,
+        cost_per_million_output_token=0.0,
         model="llama3:latest",
         metadata={"vendor": "ollama"},
     )
 
     print("=" * 80)
     print("DEMO: MULTI-PROVIDER FDE (privacy + cost + capability)")
-    print(f"  {openai_provider.name:20}  cloud  capability={openai_provider.capability:.2f}  frontier reasoning")
-    print(f"  {gemini_provider.name:20}  cloud  capability={gemini_provider.capability:.2f}  cost-effective cloud")
-    print(f"  {claude_provider.name:20}  cloud  capability={claude_provider.capability:.2f}  fast, accurate")
-    print(f"  {local_provider.name:20}  local  capability={local_provider.capability:.2f}  private — PII goes here")
+    print(f"  {openai_provider.name:20}  cloud  cap={openai_provider.capability:.2f}  cost=${openai_provider.cost_per_million_input_token:.2f}/M in  frontier reasoning")
+    print(f"  {gemini_provider.name:20}  cloud  cap={gemini_provider.capability:.2f}  cost=${gemini_provider.cost_per_million_input_token:.2f}/M in  cost-effective cloud")
+    print(f"  {claude_provider.name:20}  cloud  cap={claude_provider.capability:.2f}  cost=${claude_provider.cost_per_million_input_token:.2f}/M in  fast, accurate")
+    print(f"  {local_provider.name:20}  local  cap={local_provider.capability:.2f}  cost=free              private — PII goes here")
     print("=" * 80)
     print()
 
@@ -198,6 +194,11 @@ def demo_multi_provider(openai_key, google_key, claude_key, ollama_url=None):
 
 
 def main():
+    # ==========================================================================
+    # STEP 1: Get API Keys and base URL from environment variables (see .env.example)
+    # ==========================================================================
+    asyncio.run(sync_registry())  # populate pricing cache before Provider creation
+
     openai_key = os.getenv("OPENAI_API_KEY")
     google_key = os.getenv("GOOGLE_API_KEY")
     claude_key = os.getenv("ANTHROPIC_API_KEY")
