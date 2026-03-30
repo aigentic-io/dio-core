@@ -1,5 +1,6 @@
 """OpenAI provider adapter for cloud inference."""
 
+from typing import Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
@@ -47,20 +48,26 @@ class OpenAIProvider(ProviderAdapter):
                 )
         return self._client
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
         """Generate a response using OpenAI.
 
         Args:
-            prompt: Input prompt text
+            messages: Conversation turns in OpenAI format
             **kwargs: Additional parameters (temperature, max_tokens, etc.)
 
         Returns:
-            Generated response text
+            Tuple of (content, usage_dict) with exact token counts
         """
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=kwargs.get("temperature", self.temperature),
             max_tokens=kwargs.get("max_tokens", 1000),
         )
-        return response.choices[0].message.content
+        return (
+            response.choices[0].message.content,
+            {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+            },
+        )

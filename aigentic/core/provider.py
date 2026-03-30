@@ -3,7 +3,7 @@
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -125,6 +125,39 @@ class Provider:
             + output_tokens * self.cost_per_million_output_token / 1_000_000
         )
 
+    def cost_breakdown(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+    ) -> Dict[str, float]:
+        """Return itemized actual cost breakdown for given token counts.
+
+        Keys present depend on which pricing tiers apply:
+            input_usd         — always present
+            output_usd        — always present
+            cache_read_usd    — only when cache_read_tokens > 0 and provider has cache pricing
+            total_usd         — sum of all present line items
+
+        Args:
+            input_tokens: Actual input token count from provider response
+            output_tokens: Actual output token count from provider response
+            cache_read_tokens: Tokens served from prompt cache (default 0)
+        """
+        def _r(v: float) -> float:
+            return round(v, 10)
+
+        breakdown: Dict[str, float] = {
+            "input_usd": _r(input_tokens * self.cost_per_million_input_token / 1_000_000),
+            "output_usd": _r(output_tokens * self.cost_per_million_output_token / 1_000_000),
+        }
+        if cache_read_tokens > 0 and self.cache_read_cost_per_million_token is not None:
+            breakdown["cache_read_usd"] = _r(
+                cache_read_tokens * self.cache_read_cost_per_million_token / 1_000_000
+            )
+        breakdown["total_usd"] = _r(sum(breakdown.values()))
+        return breakdown
+
     @property
     def cost(self) -> float:
         """Backward-compatible cost estimate using default token counts (500 input + 500 output)."""
@@ -143,15 +176,18 @@ class ProviderAdapter(ABC):
         self.provider = provider
 
     @abstractmethod
-    def generate(self, prompt: str, **kwargs) -> str:
-        """Generate a response for the given prompt.
+    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
+        """Generate a response for the given messages.
 
         Args:
-            prompt: Input prompt text
-            **kwargs: Additional provider-specific parameters
+            messages: Conversation turns in OpenAI format
+                      [{"role": "user"|"system"|"assistant", "content": "..."}]
+            **kwargs: Additional provider-specific parameters (temperature, max_tokens)
 
         Returns:
-            Generated response text
+            Tuple of (content_string, usage_dict) where usage_dict contains
+            {"input_tokens": int, "output_tokens": int} with exact counts
+            from the provider response.
         """
         pass
 
@@ -172,16 +208,21 @@ class MockProvider(ProviderAdapter):
         super().__init__(provider)
         self.response_template = response_template
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, messages: List[dict], **_kwargs) -> Tuple[str, Dict[str, int]]:
         """Generate a mock response.
 
         Args:
-            prompt: Input prompt text
-            **kwargs: Ignored for mock provider
+            messages: Conversation turns (only last user message is used)
+            **_kwargs: Ignored for mock provider
 
         Returns:
-            Mock response based on template or echo
+            Tuple of (mock_content, usage_dict)
         """
+        last_user = next(
+            (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+        )
         if self.response_template:
-            return self.response_template.format(prompt=prompt, provider=self.provider.name)
-        return f"Mock response from {self.provider.name}: {prompt}"
+            content = self.response_template.format(prompt=last_user, provider=self.provider.name)
+        else:
+            content = f"Mock response from {self.provider.name}: {last_user}"
+        return content, {"input_tokens": 10, "output_tokens": 20}

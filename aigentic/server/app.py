@@ -7,8 +7,9 @@ Environment variables:
     DIO_API_KEY         Bearer token for auth (optional; open mode if unset)
     OPENAI_API_KEY      Enables OpenAI gpt-4o provider
     ANTHROPIC_API_KEY   Enables Claude claude-3-5-haiku provider
-    GOOGLE_API_KEY      Enables Gemini gemini-2.0-flash provider
+    GOOGLE_API_KEY      Enables Gemini gemini-2.5-flash-lite provider
     OLLAMA_BASE_URL     Enables remote Ollama provider
+    OPENROUTER_API_KEY  Enables OpenRouter passthrough provider (shadow mode)
     LOG_LEVEL           Logging level: DEBUG, INFO, WARNING (default: INFO)
 
 Request headers (consumed server-side, not in the request body):
@@ -127,7 +128,7 @@ def _build_dio() -> DIO:
                 from aigentic.providers.gemini import GeminiProvider
                 p = Provider(
                     name="gemini-flash", type="cloud",
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash-lite",
                 )
                 dio.add_provider(p, adapter=GeminiProvider(p, api_key=google_key))
             except Exception as e:
@@ -145,6 +146,18 @@ def _build_dio() -> DIO:
                 dio.add_provider(p, adapter=WebhostProvider(p, base_url=ollama_url))
             except Exception as e:
                 logger.warning(json.dumps({"event": "provider_skipped", "provider": "ollama-local", "reason": str(e)}))
+
+        openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        if openrouter_key:
+            try:
+                from aigentic.providers.openrouter import OpenRouterProvider
+                p = Provider(
+                    name="openrouter", type="cloud",
+                    model="openai/gpt-4o-mini",
+                )
+                dio.add_provider(p, adapter=OpenRouterProvider(p, api_key=openrouter_key))
+            except Exception as e:
+                logger.warning(json.dumps({"event": "provider_skipped", "provider": "openrouter", "reason": str(e)}))
 
     return dio
 

@@ -2,6 +2,7 @@
 
 import json
 import urllib.request
+from typing import Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
@@ -18,8 +19,6 @@ class WebhostProvider(ProviderAdapter):
         provider = Provider(name="my-llama", type="local", model="llama3.2:3b")
         adapter = WebhostProvider(provider, base_url="http://192.168.1.100:11434")
         dio.add_provider(provider, adapter=adapter)
-
-        curl http://base_url/api/generate -d '{"model": "gpt-oss:20b", "prompt": "Hello, World!", "stream": false}'
     """
 
     def __init__(
@@ -44,19 +43,19 @@ class WebhostProvider(ProviderAdapter):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def generate(self, prompt: str, **kwargs) -> str:
-        """Generate a response via the Ollama HTTP API.
+    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
+        """Generate a response via the Ollama /api/chat endpoint.
 
         Args:
-            prompt: Input prompt text
+            messages: Conversation turns in OpenAI format
             **kwargs: temperature (float), max_tokens (int)
 
         Returns:
-            Generated response text
+            Tuple of (content, usage_dict) with token counts from Ollama response
         """
         payload = json.dumps({
             "model": self.model,
-            "prompt": prompt,
+            "messages": messages,
             "stream": False,
             "options": {
                 "temperature": kwargs.get("temperature", 0.7),
@@ -65,10 +64,17 @@ class WebhostProvider(ProviderAdapter):
         }).encode()
 
         req = urllib.request.Request(
-            f"{self.base_url}/api/generate",
+            f"{self.base_url}/api/chat",
             data=payload,
             headers={"Content-Type": "application/json"},
         )
 
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read())["response"]
+            data = json.loads(resp.read())
+            return (
+                data["message"]["content"],
+                {
+                    "input_tokens": data.get("prompt_eval_count", 0),
+                    "output_tokens": data.get("eval_count", 0),
+                },
+            )

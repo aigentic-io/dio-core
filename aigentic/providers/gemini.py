@@ -1,5 +1,7 @@
 """Google Gemini provider adapter for cloud inference."""
 
+from typing import Dict, List, Tuple
+
 from aigentic.core.provider import Provider, ProviderAdapter
 
 
@@ -47,26 +49,47 @@ class GeminiProvider(ProviderAdapter):
                 )
         return self._client
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
         """Generate a response using Gemini.
 
         Args:
-            prompt: Input prompt text
+            messages: Conversation turns in OpenAI format (system message extracted
+                      as system_instruction; user/assistant roles mapped to Gemini format)
             **kwargs: Additional parameters (temperature, max_tokens, etc.)
 
         Returns:
-            Generated response text
+            Tuple of (content, usage_dict) with exact token counts
         """
         from google.genai import types
 
-        config = types.GenerateContentConfig(
+        system_instruction = None
+        contents = []
+        for m in messages:
+            if m["role"] == "system":
+                system_instruction = m["content"]
+            else:
+                role = "model" if m["role"] == "assistant" else "user"
+                contents.append(
+                    types.Content(role=role, parts=[types.Part(text=m["content"])])
+                )
+
+        config_kwargs = dict(
             temperature=kwargs.get("temperature", self.temperature),
             max_output_tokens=kwargs.get("max_tokens", 1000),
         )
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        config = types.GenerateContentConfig(**config_kwargs)
 
         response = self.client.models.generate_content(
             model=self.model_name,
-            contents=prompt,
+            contents=contents,
             config=config,
         )
-        return response.text
+        return (
+            response.text,
+            {
+                "input_tokens": response.usage_metadata.prompt_token_count,
+                "output_tokens": response.usage_metadata.candidates_token_count,
+            },
+        )

@@ -10,8 +10,12 @@ from aigentic.providers.webhost import WebhostProvider
 
 
 def _make_response(text: str):
-    """Create a mock urllib response returning the given Ollama response text."""
-    body = json.dumps({"response": text}).encode()
+    """Create a mock urllib response returning the given Ollama /api/chat response."""
+    body = json.dumps({
+        "message": {"content": text},
+        "prompt_eval_count": 5,
+        "eval_count": 10,
+    }).encode()
     mock_resp = MagicMock()
     mock_resp.read.return_value = body
     mock_resp.__enter__ = lambda s: s
@@ -23,26 +27,30 @@ class TestWebhostProvider:
     def _provider(self, model="llama3.2:3b"):
         return Provider(name="test-ollama", type="local", model=model)
 
+    def _msgs(self, text: str):
+        return [{"role": "user", "content": text}]
+
     def test_calls_correct_endpoint(self):
-        """Verifies the request is sent to {base_url}/api/generate."""
+        """Verifies the request is sent to {base_url}/api/chat."""
         provider = self._provider()
         adapter = WebhostProvider(provider, base_url="http://10.0.0.1:11434")
 
         with patch("urllib.request.urlopen", return_value=_make_response("hi")) as mock_open:
-            adapter.generate("hello")
+            adapter.generate(self._msgs("hello"))
 
         req = mock_open.call_args[0][0]
-        assert req.full_url == "http://10.0.0.1:11434/api/generate"
+        assert req.full_url == "http://10.0.0.1:11434/api/chat"
 
     def test_returns_response_field(self):
-        """Verifies the 'response' field from Ollama JSON is returned."""
+        """Verifies the content field from Ollama /api/chat JSON is returned."""
         provider = self._provider()
         adapter = WebhostProvider(provider, base_url="http://10.0.0.1:11434")
 
         with patch("urllib.request.urlopen", return_value=_make_response("Hello, world!")):
-            result = adapter.generate("say hello")
+            content, usage = adapter.generate(self._msgs("say hello"))
 
-        assert result == "Hello, world!"
+        assert content == "Hello, world!"
+        assert usage == {"input_tokens": 5, "output_tokens": 10}
 
     def test_missing_model_raises(self):
         """Verifies ValueError when no model is specified."""
@@ -57,23 +65,23 @@ class TestWebhostProvider:
         adapter = WebhostProvider(provider, base_url=tailscale_url)
 
         with patch("urllib.request.urlopen", return_value=_make_response("ok")) as mock_open:
-            adapter.generate("ping")
+            adapter.generate(self._msgs("ping"))
 
         req = mock_open.call_args[0][0]
-        assert req.full_url == f"{tailscale_url}/api/generate"
+        assert req.full_url == f"{tailscale_url}/api/chat"
 
     def test_payload_shape(self):
-        """Verifies model, prompt, stream=False, and options are sent in the payload."""
+        """Verifies model, messages, stream=False, and options are sent in the payload."""
         provider = self._provider(model="gpt-oss:20b")
         adapter = WebhostProvider(provider, base_url="http://10.0.0.1:11434")
 
         with patch("urllib.request.urlopen", return_value=_make_response("ok")) as mock_open:
-            adapter.generate("test prompt", temperature=0.5, max_tokens=512)
+            adapter.generate(self._msgs("test prompt"), temperature=0.5, max_tokens=512)
 
         req = mock_open.call_args[0][0]
         payload = json.loads(req.data.decode())
         assert payload["model"] == "gpt-oss:20b"
-        assert payload["prompt"] == "test prompt"
+        assert payload["messages"] == [{"role": "user", "content": "test prompt"}]
         assert payload["stream"] is False
         assert payload["options"]["temperature"] == 0.5
         assert payload["options"]["num_predict"] == 512

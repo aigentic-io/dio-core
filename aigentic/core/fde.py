@@ -184,7 +184,7 @@ class FederatedDecisionEngine:
 
         return RoutingScore(
             provider_name=provider.name,
-            score=overall_score,
+            score=round(overall_score, 2),
             privacy_score=privacy_score,
             cost_score=cost_score,
             capability_score=capability_score,
@@ -216,8 +216,8 @@ class FederatedDecisionEngine:
         cost_contrib = cost_score * self.weights["cost"]
         cap_contrib = capability_score * self.weights["capability"]
 
-        # Describe cost tier
-        if cost_score >= 99:
+        # Describe cost tier — "free" only when actual pricing is zero
+        if provider.cost_per_million_input_token == 0.0 and provider.cost_per_million_output_token == 0.0:
             cost_label = f"free {provider.type}"
         elif cost_score >= 75:
             cost_label = f"low-cost {provider.type}"

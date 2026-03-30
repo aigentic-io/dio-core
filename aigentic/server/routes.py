@@ -15,18 +15,20 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from aigentic.core.fde import FederatedDecisionEngine
 from aigentic.core.pii_detector import PIIDetector
 from aigentic.server.device_context import to_fde_kwargs
-from aigentic.server.models import InferRequest, InferResult
+from aigentic.server.models import (
+    ChatCompletionChoice,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionUsage,
+    Message,
+)
 
 logger = logging.getLogger("dio.server")
 router = APIRouter()
 
 
 def _extract_text(messages) -> str:
-    """Extract plain text from messages for routing analysis (PII, complexity, tokens).
-
-    In v1, routing and inference both operate on text. Multimodal providers will
-    receive the full messages list directly in a future update.
-    """
+    """Extract plain text from messages for routing analysis (PII, complexity, tokens)."""
     parts = []
     for msg in messages:
         if isinstance(msg.content, str):
@@ -37,8 +39,20 @@ def _extract_text(messages) -> str:
                     parts.append(part.text)
     return " ".join(parts)
 
+
+def _messages_to_dicts(messages) -> list:
+    """Convert Pydantic Message models to plain dicts for provider adapters."""
+    result = []
+    for msg in messages:
+        if isinstance(msg.content, str):
+            result.append({"role": msg.role, "content": msg.content})
+        else:
+            text = " ".join(p.text for p in msg.content if p.type == "text")
+            result.append({"role": msg.role, "content": text})
+    return result
+
+
 # ── Auth ───────────────────────────────────────────────────────────────────────
-# Read at import time (after dotenv is loaded by app.py).
 _API_KEY = os.getenv("DIO_API_KEY")
 _bearer = HTTPBearer(auto_error=False)
 
@@ -59,17 +73,13 @@ def _check_auth(
 
 # ── JWT helpers ────────────────────────────────────────────────────────────────
 def _extract_user_id(token: str) -> Optional[str]:
-    """Extract user_id from JWT sub claim (payload decode only — no verification).
-
-    For logging and tracing only. Production deployments should validate the
-    JWT signature using JWT_SECRET or a JWKS endpoint before trusting claims.
-    """
+    """Extract user_id from JWT sub claim (payload decode only — no verification)."""
     try:
         parts = token.split(".")
         if len(parts) != 3:
             return None
         payload = parts[1]
-        payload += "=" * (4 - len(payload) % 4)  # restore base64 padding
+        payload += "=" * (4 - len(payload) % 4)
         decoded = json.loads(base64.urlsafe_b64decode(payload))
         return decoded.get("sub")
     except Exception:
@@ -115,16 +125,22 @@ def list_providers(request: Request, _=Depends(_check_auth)):
     ]
 
 
-@router.post("/infer", response_model=InferResult)
-def infer(req: InferRequest, request: Request, response: Response, _=Depends(_check_auth)):
-    """Route content to the best available provider via FDE and return the result.
+@router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+def chat_completions(
+    req: ChatCompletionRequest,
+    request: Request,
+    response: Response,
+    _=Depends(_check_auth),
+):
+    """Route a chat completion to the best available provider via FDE.
+
+    OpenAI / OpenRouter compatible endpoint — clients swap the base URL only.
 
     ClientContext drives battery/connectivity/on-device routing decisions.
-    User identity (tier, org, policies) is resolved from the Bearer token —
-    never accepted from the request body.
+    User identity is resolved from the Bearer token, never from the request body.
 
-    Explicit override fields (require_local, max_cost, max_latency_ms) bypass
-    all context and server-resolved policy when set.
+    The x_dio extension field carries routing metadata (provider, score, reason,
+    estimated cost). Standard OR clients that ignore x_dio are unaffected.
     """
     dio = request.app.state.dio
     t0 = time.monotonic()
@@ -134,19 +150,14 @@ def infer(req: InferRequest, request: Request, response: Response, _=Depends(_ch
     session_id = request.headers.get("X-Session-ID")
     accept_language = request.headers.get("Accept-Language")
 
-    # Extract user_id from JWT sub claim (logging only — no signature verification here)
     user_id = None
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         user_id = _extract_user_id(auth_header[7:])
 
-    # Echo trace ID so clients can correlate requests across retries
     response.headers["X-Request-ID"] = request_id
 
-    # ── FDE routing ───────────────────────────────────────────────────────────
-    # Build kwargs from device context; explicit request fields take precedence.
-    # User-level policy (tier caps, privacy rules) is applied here by dio-platform
-    # after resolving the token — in dio-core it falls through to FDE defaults.
+    # ── FDE routing kwargs ────────────────────────────────────────────────────
     fde_kwargs = to_fde_kwargs(req.client_context)
     if req.require_local is not None:
         fde_kwargs["require_local"] = req.require_local
@@ -154,7 +165,6 @@ def infer(req: InferRequest, request: Request, response: Response, _=Depends(_ch
         fde_kwargs["max_cost"] = req.max_cost
     if req.max_latency_ms is not None:
         fde_kwargs["max_latency_ms"] = req.max_latency_ms
-    # Inference params — passed through to the selected provider adapter
     if req.temperature is not None:
         fde_kwargs["temperature"] = req.temperature
     if req.max_tokens is not None:
@@ -171,12 +181,11 @@ def infer(req: InferRequest, request: Request, response: Response, _=Depends(_ch
             },
         )
 
-    # Extract text for routing analysis (PII, complexity, token count).
-    # v1: routing operates on text; multimodal providers receive full messages in v2.
     routing_text = _extract_text(req.messages)
+    messages_dicts = _messages_to_dicts(req.messages)
 
     try:
-        result = dio.route(routing_text, **fde_kwargs)
+        result = dio.route(routing_text, messages=messages_dicts, **fde_kwargs)
     except Exception as exc:
         wall_ms = int((time.monotonic() - t0) * 1000)
         logger.error(json.dumps({
@@ -194,39 +203,58 @@ def infer(req: InferRequest, request: Request, response: Response, _=Depends(_ch
         ) from exc
     wall_ms = int((time.monotonic() - t0) * 1000)
 
-    # ── Telemetry: NDJSON to stdout ───────────────────────────────────────────
+    # ── Build x_dio routing metadata ─────────────────────────────────────────
     has_pii = PIIDetector.has_pii(routing_text)
     complexity = FederatedDecisionEngine.analyze_complexity(routing_text)
 
-    # Augment FDE metadata with routing context so clients see the real reason
-    metadata = dict(result.metadata)
+    x_dio: dict = {
+        "provider": result.provider,
+        "routed_by": "fde",
+        "score": result.metadata.get("score"),
+        "reason": result.metadata.get("reason"),
+        "routing_mode": result.metadata.get("routing_mode"),
+    }
+    if result.was_fallback:
+        x_dio["skipped_providers"] = result.metadata.get("skipped_providers", [])
+        x_dio["fallback_reason"] = result.metadata.get("fallback_reason")
+
+    # Augment reason with context so clients see the real routing driver
     if has_pii:
-        metadata["pii_detected"] = True
-        metadata["reason"] = "PII detected — routed to privacy provider (never sent to cloud)"
+        x_dio["pii_detected"] = True
+        x_dio["reason"] = "PII detected — routed to privacy provider (never sent to cloud)"
     elif fde_kwargs.get("require_local"):
         if req.require_local is not None:
-            metadata["reason"] = "require_local (explicit override)"
+            x_dio["reason"] = "require_local (explicit override)"
         elif req.client_context:
             offline = req.client_context.connectivity == "offline"
             low_bat = (req.client_context.battery_level is not None
                        and req.client_context.battery_level < 20)
             if offline and low_bat:
-                metadata["reason"] = (
+                x_dio["reason"] = (
                     f"Offline and low battery ({req.client_context.battery_level}%)"
                     " — local provider selected"
                 )
             elif offline:
-                metadata["reason"] = "Offline — no network, routed to local provider"
+                x_dio["reason"] = "Offline — no network, routed to local provider"
             elif low_bat:
-                metadata["reason"] = (
+                x_dio["reason"] = (
                     f"Low battery ({req.client_context.battery_level}%)"
                     " — optimal for battery conservation"
                 )
             else:
-                metadata["reason"] = "require_local — local provider selected"
+                x_dio["reason"] = "require_local — local provider selected"
         else:
-            metadata["reason"] = "require_local — local provider selected"
+            x_dio["reason"] = "require_local — local provider selected"
 
+    # ── Actual cost breakdown from provider response tokens ───────────────────
+    usage = result.usage or {"input_tokens": 0, "output_tokens": 0}
+    x_dio["cost"] = dio.providers[result.provider].cost_breakdown(
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        cache_read_tokens=usage.get("cache_read_tokens", 0),
+    )
+
+    # ── Telemetry: NDJSON to stdout ───────────────────────────────────────────
     logger.info(json.dumps({
         "ts": datetime.now(timezone.utc).isoformat(),
         "request_id": request_id,
@@ -240,17 +268,28 @@ def infer(req: InferRequest, request: Request, response: Response, _=Depends(_ch
             k: result.metadata.get(f"{k}_score")
             for k in ("privacy", "cost", "capability", "latency")
         },
-        "estimated_cost": result.metadata.get("estimated_cost", 0),
         "has_pii": has_pii,
         "complexity": complexity.value,
-        "content_tokens": len(routing_text.split()),
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "cost_usd": x_dio["cost"]["total_usd"],
         "wall_ms": wall_ms,
     }))
 
-    return InferResult(
-        provider=result.provider,
-        model=dio.providers[result.provider].model,
-        content=result.content,
-        routed_by="fde",
-        metadata=metadata,
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{request_id}",
+        created=int(time.time()),
+        model=dio.providers[result.provider].model or result.provider,
+        choices=[
+            ChatCompletionChoice(
+                message=Message(role="assistant", content=result.content),
+                finish_reason="stop",
+            )
+        ],
+        usage=ChatCompletionUsage(
+            prompt_tokens=usage["input_tokens"],
+            completion_tokens=usage["output_tokens"],
+            total_tokens=usage["input_tokens"] + usage["output_tokens"],
+        ),
+        x_dio=x_dio,
     )

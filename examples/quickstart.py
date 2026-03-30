@@ -35,24 +35,24 @@ dio.add_policy(rule=privacy_rule, enforcement="strict")
 # WORKSHOP EXERCISE 2: Cost Optimizer Policy
 # WORKSHOP TODO: Uncomment the code below (remove the # at start of each line)
 # =============================================================================
-def cost_optimizer(request):
-    """Route simple queries to cheap local model, complex to cloud."""
-    prompt = request.prompt.lower()
-    simple_keywords = ["what is", "define", "explain briefly", "simple"]
+# def cost_optimizer(request):
+#     """Route simple queries to cheap local model, complex to cloud."""
+#     prompt = request.prompt.lower()
+#     simple_keywords = ["what is", "define", "explain briefly", "simple"]
 
-    # Check if prompt contains simple keywords
-    for keyword in simple_keywords:
-        if keyword in prompt:
-            return "SIMPLE"
+#     # Check if prompt contains simple keywords
+#     for keyword in simple_keywords:
+#         if keyword in prompt:
+#             return "SIMPLE"
 
-    return "COMPLEX"
+#     return "COMPLEX"
 
-# Add the cost optimizer policy (advisory = can be overridden by privacy)
-dio.add_policy(rule=cost_optimizer, enforcement="advisory")
+# # Add the cost optimizer policy (advisory = can be overridden by privacy)
+# dio.add_policy(rule=cost_optimizer, enforcement="advisory")
 
-# Map custom classifications to providers
-dio.set_classification_mapping("SIMPLE", local)   # Cheap queries → local
-dio.set_classification_mapping("COMPLEX", cloud)  # Complex queries → cloud
+# # Map custom classifications to providers
+# dio.set_classification_mapping("SIMPLE", local)   # Cheap queries → local
+# dio.set_classification_mapping("COMPLEX", cloud)  # Complex queries → cloud
 
 # =============================================================================
 # WORKSHOP EXERCISE 3: Cost Estimation
@@ -61,13 +61,13 @@ dio.set_classification_mapping("COMPLEX", cloud)  # Complex queries → cloud
 # Providers have separate input/output token costs. You can estimate the cost
 # of a request before sending it — useful for budgeting and cost-aware routing.
 #
-def show_cost_estimate(provider, input_tokens, output_tokens):
-    """Print a per-million-token cost breakdown for a provider."""
-    cost = provider.estimated_cost(input_tokens, output_tokens)
-    print(f"    Provider: {provider.name}")
-    print(f"    Input:  {input_tokens} tokens x ${provider.cost_per_million_input_token:.4f}/M = ${input_tokens * provider.cost_per_million_input_token / 1_000_000:.6f}")
-    print(f"    Output: {output_tokens} tokens x ${provider.cost_per_million_output_token:.4f}/M = ${output_tokens * provider.cost_per_million_output_token / 1_000_000:.6f}")
-    print(f"    Total estimated cost: ${cost:.4f}")
+# def show_cost_estimate(provider, input_tokens, output_tokens):
+#     """Print a per-million-token cost breakdown for a provider."""
+#     cost = provider.estimated_cost(input_tokens, output_tokens)
+#     print(f"    Provider: {provider.name}")
+#     print(f"    Input:  {input_tokens} tokens x ${provider.cost_per_million_input_token:.4f}/M = ${input_tokens * provider.cost_per_million_input_token / 1_000_000:.6f}")
+#     print(f"    Output: {output_tokens} tokens x ${provider.cost_per_million_output_token:.4f}/M = ${output_tokens * provider.cost_per_million_output_token / 1_000_000:.6f}")
+#     print(f"    Total estimated cost: ${cost:.4f}")
 
 # =============================================================================
 # Test All Routing Scenarios
