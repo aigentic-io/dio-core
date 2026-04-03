@@ -86,10 +86,11 @@ class GeminiProvider(ProviderAdapter):
             contents=contents,
             config=config,
         )
+        usage = response.usage_metadata
         return (
             response.text,
             {
-                "input_tokens": response.usage_metadata.prompt_token_count,
-                "output_tokens": response.usage_metadata.candidates_token_count,
+                "input_tokens": usage.prompt_token_count if usage else 0,
+                "output_tokens": usage.candidates_token_count if usage else 0,
             },
         )

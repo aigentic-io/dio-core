@@ -74,6 +74,8 @@ class WebhostProvider(ProviderAdapter):
             return (
                 data["message"]["content"],
                 {
+                    # prompt_eval_count is omitted by Ollama on cached/continued sessions;
+                    # defaults to 0 in that case — cost tracking may undercount for long sessions.
                     "input_tokens": data.get("prompt_eval_count", 0),
                     "output_tokens": data.get("eval_count", 0),
                 },
