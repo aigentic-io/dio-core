@@ -4,6 +4,8 @@ import base64
 import json
 import logging
 import os
+
+_SERVER_MAX_TOKENS = int(os.getenv("DIO_MAX_TOKENS", "4096"))
 import time
 import uuid
 from datetime import datetime, timezone
@@ -168,7 +170,14 @@ def chat_completions(
     if req.temperature is not None:
         fde_kwargs["temperature"] = req.temperature
     if req.max_tokens is not None:
+        if req.max_tokens > _SERVER_MAX_TOKENS:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": f"max_tokens exceeds server limit of {_SERVER_MAX_TOKENS}"},
+            )
         fde_kwargs["max_tokens"] = req.max_tokens
+    else:
+        fde_kwargs["max_tokens"] = _SERVER_MAX_TOKENS
 
     # Reject multimodal content — not yet supported in dio-core.
     if any(isinstance(msg.content, list) for msg in req.messages):

@@ -11,6 +11,7 @@ Environment variables:
     OLLAMA_BASE_URL     Enables remote Ollama provider
     OPENROUTER_API_KEY  Enables OpenRouter passthrough provider (shadow mode)
     LOG_LEVEL           Logging level: DEBUG, INFO, WARNING (default: INFO)
+    DIO_MAX_TOKENS      Server-side max_tokens cap per request (default: 4096)
 
 Request headers (consumed server-side, not in the request body):
     Authorization: Bearer <jwt>      — identity; JWT sub claim → user_id for logging
