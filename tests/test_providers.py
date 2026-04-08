@@ -10,6 +10,7 @@ from aigentic.providers.webhost import WebhostProvider
 from aigentic.providers.openrouter import OpenRouterProvider
 from aigentic.providers.openai import OpenAIProvider
 from aigentic.providers.claude import ClaudeProvider
+from aigentic.providers.gemini import GeminiProvider
 
 
 def _make_response(text: str):
@@ -264,3 +265,80 @@ class TestClaudeProvider:
 
         assert call_kwargs["system"] == "You are helpful."
         assert all(m["role"] != "system" for m in call_kwargs["messages"])
+
+
+# ── GeminiProvider ────────────────────────────────────────────────────────────
+
+class TestGeminiProvider:
+    def _provider(self, model="gemini-2.0-flash"):
+        return Provider(name="gemini", type="cloud", model=model,
+                        cost_per_million_input_token=0.1, cost_per_million_output_token=0.4)
+
+    def _msgs(self, text: str, system: str = None):
+        msgs = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({"role": "user", "content": text})
+        return msgs
+
+    def _mock_response(self, content: str, prompt_token_count: int = 10,
+                       candidates_token_count: int = 20, usage_metadata=True):
+        usage = None
+        if usage_metadata:
+            usage = MagicMock()
+            usage.prompt_token_count = prompt_token_count
+            usage.candidates_token_count = candidates_token_count
+        response = MagicMock()
+        response.text = content
+        response.usage_metadata = usage
+        return response
+
+    def test_returns_content_and_usage(self):
+        """Verifies (content, usage) tuple is returned with correct token counts."""
+        adapter = GeminiProvider(self._provider(), api_key="test-key")
+        mock_response = self._mock_response("Hello!", prompt_token_count=10,
+                                            candidates_token_count=20)
+
+        with patch.object(adapter, "_client") as mock_client:
+            adapter._client = mock_client
+            mock_client.models.generate_content.return_value = mock_response
+            content, usage = adapter.generate(self._msgs("hi"))
+
+        assert content == "Hello!"
+        assert usage == {"input_tokens": 10, "output_tokens": 20}
+
+    def test_null_usage_metadata_defaults_to_zero(self):
+        """Verifies usage defaults to 0 when usage_metadata is None (our bug fix)."""
+        adapter = GeminiProvider(self._provider(), api_key="test-key")
+        mock_response = self._mock_response("ok", usage_metadata=False)
+
+        with patch.object(adapter, "_client") as mock_client:
+            adapter._client = mock_client
+            mock_client.models.generate_content.return_value = mock_response
+            content, usage = adapter.generate(self._msgs("hi"))
+
+        assert content == "ok"
+        assert usage == {"input_tokens": 0, "output_tokens": 0}
+
+    def test_system_message_as_system_instruction(self):
+        """Verifies system message is passed as system_instruction, not in contents."""
+        adapter = GeminiProvider(self._provider(), api_key="test-key")
+        mock_response = self._mock_response("ok")
+
+        with patch.object(adapter, "_client") as mock_client:
+            adapter._client = mock_client
+            mock_client.models.generate_content.return_value = mock_response
+            adapter.generate(self._msgs("hello", system="You are helpful."))
+            call_kwargs = mock_client.models.generate_content.call_args[1]
+
+        config = call_kwargs["config"]
+        assert config.system_instruction == "You are helpful."
+        # system message must not appear in contents
+        for content in call_kwargs["contents"]:
+            assert content.role != "system"
+
+    def test_missing_model_raises(self):
+        """Verifies ValueError when no model is specified."""
+        provider = Provider(name="gemini", type="cloud")
+        with pytest.raises(ValueError, match="Gemini model name must be specified"):
+            GeminiProvider(provider, api_key="test-key")
