@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aigentic.core.provider import Provider
-from aigentic.providers.webhost import WebhostProvider
-from aigentic.providers.openrouter import OpenRouterProvider
-from aigentic.providers.openai import OpenAIProvider
 from aigentic.providers.claude import ClaudeProvider
 from aigentic.providers.gemini import GeminiProvider
+from aigentic.providers.openai import OpenAIProvider
+from aigentic.providers.openrouter import OpenRouterProvider
+from aigentic.providers.webhost import WebhostProvider
 
 
 def _make_response(text: str):

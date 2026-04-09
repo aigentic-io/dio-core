@@ -4,8 +4,6 @@ import base64
 import json
 import logging
 import os
-
-_SERVER_MAX_TOKENS = int(os.getenv("DIO_MAX_TOKENS", "4096"))
 import time
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +24,7 @@ from aigentic.server.models import (
 )
 
 logger = logging.getLogger("dio.server")
+_SERVER_MAX_TOKENS = int(os.getenv("DIO_MAX_TOKENS", "4096"))
 router = APIRouter()
 
 
