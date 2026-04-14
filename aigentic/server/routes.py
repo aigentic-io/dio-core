@@ -21,7 +21,9 @@ from aigentic.server.models import (
     ChatCompletionResponse,
     ChatCompletionUsage,
     Message,
+    ShadowIngestRequest,
 )
+from aigentic.server.shadow import ShadowWriter, build_shadow_record
 
 logger = logging.getLogger("dio.server")
 _SERVER_MAX_TOKENS = int(os.getenv("DIO_MAX_TOKENS", "4096"))
@@ -301,3 +303,87 @@ def chat_completions(
         ),
         x_dio=x_dio,
     )
+
+
+@router.post("/v1/shadow/ingest", status_code=202)
+def shadow_ingest(
+    req: ShadowIngestRequest,
+    request: Request,
+    _=Depends(_check_auth),
+):
+    """Passive shadow ingestion — DIO is never in the client's critical path.
+
+    Client provides the exact ChatCompletionRequest they sent to their provider
+    plus the original response. DIO runs FDE scoring using the same
+    client_context, records what it would have routed to and at what cost.
+    No LLM call is made. dio_response and similarity_score are filled in by
+    offline batch processing.
+
+    Returns 202 with record_id. Pass X-Request-ID to correlate with your
+    own observability traces.
+    """
+    if not req.request.model:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "request.model is required for shadow ingestion"},
+        )
+
+    dio = request.app.state.dio
+    shadow_writer: ShadowWriter = request.app.state.shadow_writer
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+
+    messages_dicts = _messages_to_dicts(req.request.messages)
+    routing_text = _extract_text(req.request.messages)
+    has_pii = PIIDetector.has_pii(routing_text)
+    complexity = FederatedDecisionEngine.analyze_complexity(routing_text)
+
+    # FDE scoring with the same client_context as the original call
+    fde_kwargs = to_fde_kwargs(req.request.client_context)
+    all_scores = dio.fde.score_all(dio.providers, routing_text, **fde_kwargs)
+    top_score = all_scores[0] if all_scores else None
+
+    if top_score is None:
+        return {"accepted": True, "record_id": None, "detail": "no eligible provider"}
+
+    provider = dio.providers[top_score.provider_name]
+    dio_model = provider.model or top_score.provider_name
+    input_t = req.original_usage.get("prompt_tokens", 0)
+    output_t = req.original_usage.get("completion_tokens", 0)
+    dio_cost_usd = provider.cost_breakdown(input_t, output_t)["total_usd"]
+
+    # Original cost: client-supplied or looked up from registry
+    if req.original_cost_usd is not None:
+        original_cost_usd = req.original_cost_usd
+    else:
+        from aigentic.registry.client import get_pricing
+        plan = get_pricing(req.request.model, modality="text")
+        if plan:
+            base = plan.get("base", {})
+            original_cost_usd = round(
+                input_t * base.get("input", 0) / 1_000_000
+                + output_t * base.get("output", 0) / 1_000_000,
+                10,
+            )
+        else:
+            original_cost_usd = 0.0
+
+    record = build_shadow_record(
+        request_id=request_id,
+        org_id=req.org_id,
+        request_messages=messages_dicts,
+        original_model=req.request.model,
+        original_response=req.original_response,
+        original_usage=req.original_usage,
+        original_latency_ms=req.original_latency_ms,
+        original_cost_usd=original_cost_usd,
+        dio_model=dio_model,
+        dio_response=None,
+        dio_usage={"prompt_tokens": input_t, "completion_tokens": output_t},
+        dio_latency_ms=provider.latency_ms or 0,
+        dio_cost_usd=dio_cost_usd,
+        fde_score=top_score.score,
+        complexity=complexity.value,
+        has_pii=has_pii,
+    )
+    shadow_writer.write(record)
+    return {"accepted": True, "record_id": record["record_id"]}

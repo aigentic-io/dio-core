@@ -12,6 +12,10 @@ Environment variables:
     OPENROUTER_API_KEY  Enables OpenRouter passthrough provider (shadow mode)
     LOG_LEVEL           Logging level: DEBUG, INFO, WARNING (default: INFO)
     DIO_MAX_TOKENS      Server-side max_tokens cap per request (default: 4096)
+    SHADOW_LOG_DIR      Base directory for shadow NDJSON logs (default: stdout).
+                          Files are written as <dir>/YYYY-MM-DD/shadow_NNN.ndjson.
+    SHADOW_LOG_MAX_BYTES  Rotation threshold in bytes (default: 1073741824 = 1 GB)
+                          Set small (e.g. 1048576 = 1 MB) for local testing
 
 Request headers (consumed server-side, not in the request body):
     Authorization: Bearer <jwt>      — identity; JWT sub claim → user_id for logging
@@ -44,6 +48,7 @@ except ImportError as exc:
 import aigentic.registry.client as _registry_client
 from aigentic.core import DIO, Provider
 from aigentic.registry import sync_registry
+from aigentic.server.shadow import ShadowWriter
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # Bare format — we emit NDJSON ourselves so log aggregators can parse each line.
@@ -177,4 +182,8 @@ app = FastAPI(
     version="0.1.0",
 )
 app.state.dio = _build_dio()
+app.state.shadow_writer = ShadowWriter(
+    log_dir=os.getenv("SHADOW_LOG_DIR"),
+    max_bytes=int(os.getenv("SHADOW_LOG_MAX_BYTES", 1_073_741_824)),
+)
 app.include_router(router)

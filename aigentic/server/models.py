@@ -126,3 +126,29 @@ class ChatCompletionResponse(BaseModel):
     choices: List[ChatCompletionChoice]
     usage: ChatCompletionUsage                 # exact counts from provider
     x_dio: Optional[Dict[str, Any]] = None    # routing metadata extension
+
+
+# ── Shadow mode ───────────────────────────────────────────────────────────────
+
+class ShadowIngestRequest(BaseModel):
+    """Passive shadow ingestion — client provides their original request + response.
+
+    The `request` field is the exact ChatCompletionRequest the client sent to
+    their provider. `request.model` is required (identifies the original model).
+    `request.client_context` drives FDE scoring so DIO's routing decision
+    reflects the same device/network conditions as the original call.
+
+    DIO runs FDE scoring, writes a self-contained shadow record, and returns
+    202 immediately. No LLM call is made. DIO-side fields (dio_model, dio_cost,
+    fde_score) are computed from the FDE analysis. dio_response and
+    similarity_score are left null and filled in by offline batch processing.
+
+    org_id scopes the record for multi-tenant analytics.
+    When original_cost_usd is omitted, DIO looks it up from the registry.
+    """
+    org_id: Optional[str] = None
+    request: ChatCompletionRequest               # exact request sent to original provider
+    original_response: str                       # text content their provider returned
+    original_usage: Dict[str, int]               # {"prompt_tokens": N, "completion_tokens": N}
+    original_latency_ms: int
+    original_cost_usd: Optional[float] = None    # omit → DIO looks up from registry
