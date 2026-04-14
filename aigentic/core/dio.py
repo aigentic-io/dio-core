@@ -120,16 +120,30 @@ class DIO:
             "trigger": trigger,
         }
 
-    def route(self, prompt: str, **kwargs) -> Response:
+    def route(
+        self,
+        prompt: str,
+        messages: Optional[List[dict]] = None,
+        **kwargs,
+    ) -> Response:
         """Route a request to the appropriate provider.
 
         Args:
-            prompt: User's prompt/query
+            prompt: User's prompt/query (used for FDE scoring and policy routing)
+            messages: Full conversation in OpenAI format. When provided, passed to
+                      the adapter as-is (preserves system prompt and history).
+                      When None, wraps prompt as a single user message.
             **kwargs: Additional parameters to pass to the provider (and routing hints)
 
         Returns:
             Response object with the result
         """
+        # Build the messages list that adapters will receive.
+        # FDE scoring always operates on the plain text prompt for simplicity.
+        msgs: List[dict] = messages if messages is not None else [
+            {"role": "user", "content": prompt}
+        ]
+
         if self.use_fde:
             # FDE mode: score all eligible providers, try in order until one succeeds.
             # This provides automatic resilience — a provider that throws (auth error,
@@ -140,11 +154,44 @@ class DIO:
             if not all_scores:
                 raise ValueError("No eligible provider found for this request")
 
+            # Routing-specific keys that adapters don't understand — strip before calling generate().
+            _routing_keys = {"max_cost", "max_latency_ms", "require_local"}
+            base_adapter_kwargs = {k: v for k, v in kwargs.items() if k not in _routing_keys}
+            max_cost = kwargs.get("max_cost")
+
             failed: list[dict] = []
             for routing_score in all_scores:
                 provider_name = routing_score.provider_name
+                provider = self.providers[provider_name]
+
+                # Derive max_tokens from budget so output never blows the cost ceiling.
+                # word_count × 2 is a conservative input token estimate that accounts for
+                # tokenization overhead (~1.3 tokens/word) and message structure framing.
+                #
+                # Cache reads: if prompt cache hits occur, actual input cost will be lower
+                # than estimated (cache_read_cost < input_cost), giving extra output headroom.
+                # We intentionally ignore this here so the estimate stays conservative.
+                #
+                # TODO: deduct tool_call tokens from remaining budget when tool use is added
+                # (each tool invocation adds input + output tokens that count toward cost).
+                call_kwargs = dict(base_adapter_kwargs)
+                if max_cost is not None:
+                    output_rate = provider.cost_per_million_output_token
+                    if output_rate > 0:
+                        estimated_input_tokens = len(prompt.split()) * 2
+                        estimated_input_cost = (
+                            provider.cost_per_million_input_token
+                            * estimated_input_tokens / 1_000_000
+                        )
+                        remaining = max(0.0, max_cost - estimated_input_cost)
+                        budget_tokens = int(remaining / (output_rate / 1_000_000))
+                        call_kwargs["max_tokens"] = min(
+                            call_kwargs.get("max_tokens", 4096),
+                            max(1, budget_tokens),
+                        )
+
                 try:
-                    content = self.adapters[provider_name].generate(prompt, **kwargs)
+                    content, usage = self.adapters[provider_name].generate(msgs, **call_kwargs)
                     metadata = {
                         "routing_mode": "fde",
                         "score": routing_score.score,
@@ -163,8 +210,9 @@ class DIO:
                         provider=provider_name,
                         was_fallback=bool(failed),
                         metadata=metadata,
+                        usage=usage,
                     )
-                except (OSError, TimeoutError, ValueError, RuntimeError) as e:
+                except Exception as e:
                     failed.append({"provider": provider_name, "error": str(e)})
 
             raise ValueError(
@@ -183,17 +231,18 @@ class DIO:
                 raise ValueError("No suitable provider found for this request")
 
             try:
-                content = self.adapters[provider_name].generate(prompt, **kwargs)
+                content, usage = self.adapters[provider_name].generate(msgs, **kwargs)
             except Exception as e:
                 if self.fallback_config and isinstance(e, self.fallback_config["trigger"]):
                     provider_name = self.fallback_config["fallback"]
-                    content = self.adapters[provider_name].generate(prompt, **kwargs)
+                    content, usage = self.adapters[provider_name].generate(msgs, **kwargs)
                     metadata["fallback_reason"] = str(e)
                     return Response(
                         content=content,
                         provider=provider_name,
                         was_fallback=True,
                         metadata=metadata,
+                        usage=usage,
                     )
                 raise
 
@@ -202,4 +251,5 @@ class DIO:
                 provider=provider_name,
                 was_fallback=False,
                 metadata=metadata,
+                usage=usage,
             )

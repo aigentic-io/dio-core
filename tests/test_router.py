@@ -251,6 +251,71 @@ class TestRouter:
         assert router.route("test") == "cloud"
 
 
+class TestDIOMessages:
+    """Tests for DIO.route() messages parameter (OpenAI format)."""
+
+    def _setup(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            local = Provider(
+                name="local", type="local",
+                cost_per_million_input_token=0.0,
+                cost_per_million_output_token=0.0,
+                capability=0.5,
+            )
+        dio = DIO(use_fde=True)
+        dio.add_provider(local)
+        return dio
+
+    def test_messages_passed_to_adapter(self):
+        """Verify messages list is forwarded to the adapter unchanged."""
+        received = {}
+
+        class CapturingMock(MockProvider):
+            def generate(self, messages, **kwargs):
+                received["messages"] = messages
+                return ("ok", {"input_tokens": 5, "output_tokens": 10})
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            local = Provider(name="local", type="local", capability=0.5)
+        dio = DIO(use_fde=True)
+        dio.add_provider(local, adapter=CapturingMock(local))
+
+        msgs = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "What is Python?"},
+        ]
+        dio.route("What is Python?", messages=msgs)
+        assert received["messages"] == msgs
+
+    def test_prompt_only_wraps_as_user_message(self):
+        """When messages=None, prompt is wrapped as a single user message."""
+        received = {}
+
+        class CapturingMock(MockProvider):
+            def generate(self, messages, **kwargs):
+                received["messages"] = messages
+                return ("ok", {"input_tokens": 5, "output_tokens": 10})
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            local = Provider(name="local", type="local", capability=0.5)
+        dio = DIO(use_fde=True)
+        dio.add_provider(local, adapter=CapturingMock(local))
+
+        dio.route("What is Python?")
+        assert received["messages"] == [{"role": "user", "content": "What is Python?"}]
+
+    def test_response_includes_usage(self):
+        """Verify usage dict from adapter is stored in Response.usage."""
+        dio = self._setup()
+        r = dio.route("What is Python?")
+        assert r.usage is not None
+        assert "input_tokens" in r.usage
+        assert "output_tokens" in r.usage
+
+
 class TestFDEFallback:
     """FDE automatic fallback when a provider's adapter throws an exception."""
 

@@ -1,5 +1,6 @@
 """Anthropic Claude provider adapter for cloud inference."""
 
+from typing import Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
@@ -50,20 +51,39 @@ class ClaudeProvider(ProviderAdapter):
                 )
         return self._client
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
         """Generate a response using Claude.
 
         Args:
-            prompt: Input prompt text
+            messages: Conversation turns in OpenAI format (system message extracted
+                      and passed as top-level system= parameter per Anthropic API)
             **kwargs: Additional parameters (temperature, max_tokens, etc.)
 
         Returns:
-            Generated response text
+            Tuple of (content, usage_dict) with exact token counts
         """
-        response = self.client.messages.create(
+        system = None
+        chat_messages = []
+        for m in messages:
+            if m["role"] == "system":
+                system = m["content"]
+            else:
+                chat_messages.append(m)
+
+        create_kwargs = dict(
             model=self.model,
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
             temperature=kwargs.get("temperature", self.temperature),
-            messages=[{"role": "user", "content": prompt}]
+            messages=chat_messages,
         )
-        return response.content[0].text
+        if system:
+            create_kwargs["system"] = system
+
+        response = self.client.messages.create(**create_kwargs)
+        return (
+            response.content[0].text,
+            {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            },
+        )

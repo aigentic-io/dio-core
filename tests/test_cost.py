@@ -48,6 +48,64 @@ class TestProviderCost:
         assert provider.cost == 0.0
 
 
+class TestProviderCostBreakdown:
+    """Tests for Provider.cost_breakdown() — itemized actual cost from token counts."""
+
+    def test_basic_input_output(self):
+        """Verify breakdown contains input_usd, output_usd, and correct total."""
+        provider = Provider(
+            name="test", type="cloud",
+            cost_per_million_input_token=2.5,
+            cost_per_million_output_token=10.0,
+        )
+        breakdown = provider.cost_breakdown(input_tokens=1000, output_tokens=500)
+        assert breakdown["input_usd"] == pytest.approx(1000 * 2.5 / 1_000_000)
+        assert breakdown["output_usd"] == pytest.approx(500 * 10.0 / 1_000_000)
+        assert breakdown["total_usd"] == pytest.approx(
+            breakdown["input_usd"] + breakdown["output_usd"]
+        )
+
+    def test_cache_read_included_when_nonzero(self):
+        """Verify cache_read_usd appears when cache_read_tokens > 0 and rate is set."""
+        provider = Provider(
+            name="test", type="cloud",
+            cost_per_million_input_token=2.5,
+            cost_per_million_output_token=10.0,
+            cache_read_cost_per_million_token=0.5,
+        )
+        breakdown = provider.cost_breakdown(
+            input_tokens=1000, output_tokens=500, cache_read_tokens=200
+        )
+        assert "cache_read_usd" in breakdown
+        assert breakdown["cache_read_usd"] == pytest.approx(200 * 0.5 / 1_000_000)
+        assert breakdown["total_usd"] == pytest.approx(
+            breakdown["input_usd"] + breakdown["output_usd"] + breakdown["cache_read_usd"]
+        )
+
+    def test_cache_read_omitted_when_zero(self):
+        """Verify cache_read_usd is absent when cache_read_tokens=0."""
+        provider = Provider(
+            name="test", type="cloud",
+            cost_per_million_input_token=2.5,
+            cost_per_million_output_token=10.0,
+            cache_read_cost_per_million_token=0.5,
+        )
+        breakdown = provider.cost_breakdown(input_tokens=1000, output_tokens=500)
+        assert "cache_read_usd" not in breakdown
+
+    def test_free_provider_breakdown_zeros(self):
+        """Verify free local provider returns all zeros."""
+        provider = Provider(
+            name="free", type="local",
+            cost_per_million_input_token=0.0,
+            cost_per_million_output_token=0.0,
+        )
+        breakdown = provider.cost_breakdown(input_tokens=1000, output_tokens=500)
+        assert breakdown["input_usd"] == 0.0
+        assert breakdown["output_usd"] == 0.0
+        assert breakdown["total_usd"] == 0.0
+
+
 class TestFDECostScoring:
     """Tests for FDE cost scoring with per-token costs."""
 

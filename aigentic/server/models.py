@@ -63,60 +63,66 @@ class ClientContext(BaseModel):
     memory_mb: Optional[int] = None
 
 
-class InferRequest(BaseModel):
-    """Request to route content through DIO and get an inference result.
+# ── OpenAI / OpenRouter compatible request & response ─────────────────────────
 
-    User identity is resolved server-side from the Authorization Bearer token
-    (JWT sub → user_id, org_id, tier, policies). Clients must not self-report
-    identity — the server derives everything from the token.
+class ChatCompletionRequest(BaseModel):
+    """OpenAI / OpenRouter compatible chat completion request.
 
-    Headers consumed by the server (not part of this model):
+    Standard fields (temperature, max_tokens, stream) are passed through to the
+    selected provider. DIO-specific fields (max_cost, max_latency_ms,
+    require_local, client_context) are routing hints — standard OR clients that
+    omit them will get pure FDE routing with no extra constraints.
+
+    The model field is a hint only in Sprint 1. FDE picks the best available
+    provider regardless. In Sprint 2 shadow mode, model identifies the 'original'
+    request to replay for quality comparison.
+
+    Headers consumed server-side (not in this model):
         Authorization: Bearer <jwt>      — identity, tier, org, routing policies
-        Accept-Language: zh-CN,en;q=0.8  — ordered language preference list
+        Accept-Language: zh-CN,en;q=0.8  — ordered language preference
         X-Session-ID: <uuid>             — groups requests in a conversation
         X-Request-ID: <uuid>             — per-request trace ID (echoed in response)
-
-    The `content` field is text-only in v1. In v2 it will become
-    Union[str, list[ContentPart]] to support multimodal inputs (images, audio).
-    Keeping the field named `content` now avoids a breaking rename later.
-
-    Follows the OpenAI / OpenRouter / LiteLLM messages format so clients can
-    integrate with minimal changes. DIO-specific fields are additive.
-
-    Attributes:
-        messages: Conversation turns. content can be a string or a list of
-            ContentParts (text + image_url in v1; audio/video in v2).
-        client_context: Optional device/environment context. Drives battery,
-            connectivity, and on-device model routing decisions.
-        temperature: Sampling temperature passed through to the provider (0–2).
-        max_tokens: Maximum output tokens passed through to the provider.
-        max_cost: Explicit cost cap in USD. Overrides server-resolved tier cap.
-        max_latency_ms: Maximum acceptable latency in milliseconds.
-        require_local: Explicit local-only flag. Overrides all context fields.
+        X-DIO-Shadow: true               — enable shadow mode (Sprint 2)
     """
     messages: List[Message]
-    client_context: Optional[ClientContext] = None
-    # Standard inference params — passed through to the selected provider
+    model: Optional[str] = None          # OR-style hint, e.g. "openai/gpt-4o-mini"
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
-    # Explicit FDE overrides — bypass server-resolved policy when set
+    stream: bool = False
+    # DIO routing overrides — ignored by standard OR clients
     max_cost: Optional[float] = None
     max_latency_ms: Optional[int] = None
     require_local: Optional[bool] = None
+    client_context: Optional[ClientContext] = None
 
 
-class InferResult(BaseModel):
-    """Result of a DIO routing and inference operation.
+class ChatCompletionUsage(BaseModel):
+    """Exact token counts from the provider response."""
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
 
-    Attributes:
-        provider: Name of the selected provider.
-        model: Specific model used, if set on the provider.
-        content: Generated response text (v2: may include multimodal output).
-        routed_by: Routing mode used (always "fde" in this server).
-        metadata: Routing scores and decision metadata from the FDE.
+
+class ChatCompletionChoice(BaseModel):
+    """A single completion choice."""
+    index: int = 0
+    message: Message
+    finish_reason: str = "stop"
+
+
+class ChatCompletionResponse(BaseModel):
+    """OpenAI / OpenRouter compatible chat completion response.
+
+    Fully compatible with the OpenAI response schema so clients can swap the
+    base URL and receive structured responses without code changes.
+
+    x_dio is an extension field (null for non-DIO clients) carrying routing
+    metadata: which provider was selected, why, and the estimated cost.
     """
-    provider: str
-    model: Optional[str] = None
-    content: str
-    routed_by: str
-    metadata: Dict[str, Any] = {}
+    id: str                                    # "chatcmpl-<uuid>"
+    object: str = "chat.completion"
+    created: int                               # unix timestamp
+    model: str                                 # actual model used
+    choices: List[ChatCompletionChoice]
+    usage: ChatCompletionUsage                 # exact counts from provider
+    x_dio: Optional[Dict[str, Any]] = None    # routing metadata extension

@@ -1,7 +1,7 @@
 """Response dataclass for DIO routing results."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -13,8 +13,10 @@ class Response:
         provider: Name of the provider that handled the request
         was_fallback: Whether this response came from a fallback provider
         metadata: Additional metadata about the routing decision
+        usage: Exact token counts from the provider response
     """
     content: str
     provider: str
     was_fallback: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
+    usage: Optional[Dict[str, int]] = None
