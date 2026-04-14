@@ -343,7 +343,11 @@ def shadow_ingest(
     top_score = all_scores[0] if all_scores else None
 
     if top_score is None:
-        return {"accepted": True, "record_id": None, "detail": "no eligible provider"}
+        return Response(
+            content=json.dumps({"accepted": True, "record_id": None, "detail": "no eligible provider"}),
+            status_code=202,
+            media_type="application/json",
+        )
 
     provider = dio.providers[top_score.provider_name]
     dio_model = provider.model or top_score.provider_name
