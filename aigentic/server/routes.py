@@ -365,7 +365,7 @@ def shadow_ingest(
                 10,
             )
         else:
-            original_cost_usd = 0.0
+            original_cost_usd = None  # model not in registry — saving fields will be null
 
     record = build_shadow_record(
         request_id=request_id,

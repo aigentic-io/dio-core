@@ -18,7 +18,7 @@ def build_shadow_record(
     original_response: str,
     original_usage: Dict[str, int],
     original_latency_ms: int,
-    original_cost_usd: float,
+    original_cost_usd: Optional[float],
     dio_model: str,
     dio_response: Optional[str],
     dio_usage: Dict[str, int],
@@ -34,8 +34,11 @@ def build_shadow_record(
     similarity_score and response_match are null — cost fields still reflect
     the estimated saving based on token counts from the original request.
     """
-    saving = round(original_cost_usd - dio_cost_usd, 10)
-    saving_pct = round(saving / original_cost_usd * 100, 2) if original_cost_usd > 0 else 0.0
+    if original_cost_usd is not None:
+        saving = round(original_cost_usd - dio_cost_usd, 10)
+        saving_pct = round(saving / original_cost_usd * 100, 2) if original_cost_usd > 0 else 0.0
+    else:
+        saving, saving_pct = None, None
 
     similarity_score, response_match = None, None
 
