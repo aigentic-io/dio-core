@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from aigentic.core import DIO, Provider
 from aigentic.server.app import app
+from aigentic.server.shadow import ShadowWriter
 
 # ── Test DIO fixture ──────────────────────────────────────────────────────────
 
@@ -38,6 +39,7 @@ def test_dio():
             model="test-cloud", capability=0.9,
         ))
     app.state.dio = dio
+    app.state.shadow_writer = ShadowWriter()  # stdout only in tests
 
 
 @pytest.fixture
@@ -251,3 +253,80 @@ def test_client_context_no_defaults(client):
         "client_context": {},  # empty context — no platform or connectivity
     })
     assert r.status_code == 200
+
+
+# ── /v1/shadow/ingest ─────────────────────────────────────────────────────────
+
+_SHADOW_BASE = {
+    "request": {
+        "messages": [{"role": "user", "content": "What is Python?"}],
+        "model": "gpt-4o-mini",
+    },
+    "original_response": "Python is a high-level programming language.",
+    "original_usage": {"prompt_tokens": 10, "completion_tokens": 15},
+    "original_latency_ms": 300,
+}
+
+
+def test_shadow_ingest_returns_202(client):
+    r = client.post("/v1/shadow/ingest", json=_SHADOW_BASE)
+    assert r.status_code == 202
+    body = r.json()
+    assert body["accepted"] is True
+    assert body["record_id"] is not None
+
+
+def test_shadow_ingest_record_id_is_uuid(client):
+    r = client.post("/v1/shadow/ingest", json=_SHADOW_BASE)
+    record_id = r.json()["record_id"]
+    # UUIDs are 36 chars with hyphens
+    assert len(record_id) == 36
+    assert record_id.count("-") == 4
+
+
+def test_shadow_ingest_with_org_id(client):
+    payload = {**_SHADOW_BASE, "org_id": "overcast"}
+    r = client.post("/v1/shadow/ingest", json=payload)
+    assert r.status_code == 202
+
+
+def test_shadow_ingest_with_client_context(client):
+    """client_context must be forwarded to FDE scoring without error."""
+    payload = {
+        **_SHADOW_BASE,
+        "request": {
+            **_SHADOW_BASE["request"],
+            "client_context": {"battery_level": 15, "connectivity": "wifi"},
+        },
+    }
+    r = client.post("/v1/shadow/ingest", json=payload)
+    assert r.status_code == 202
+
+
+def test_shadow_ingest_missing_model_rejected(client):
+    """request.model is required — must return 422."""
+    payload = {
+        **_SHADOW_BASE,
+        "request": {"messages": [{"role": "user", "content": "Hello"}]},
+    }
+    r = client.post("/v1/shadow/ingest", json=payload)
+    assert r.status_code == 422
+
+
+def test_shadow_ingest_with_cost_provided(client):
+    """Client-supplied original_cost_usd must be accepted without registry lookup."""
+    payload = {**_SHADOW_BASE, "original_cost_usd": 0.000082}
+    r = client.post("/v1/shadow/ingest", json=payload)
+    assert r.status_code == 202
+
+
+def test_shadow_ingest_request_id_header(client):
+    """X-Request-ID must be reflected in the record_id field returned."""
+    r = client.post(
+        "/v1/shadow/ingest",
+        json=_SHADOW_BASE,
+        headers={"X-Request-ID": "trace-abc-123"},
+    )
+    assert r.status_code == 202
+
+
