@@ -1,9 +1,10 @@
 """Provider configuration and base classes for DIO."""
 
+import asyncio
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -190,6 +191,28 @@ class ProviderAdapter(ABC):
             from the provider response.
         """
         pass
+
+    async def generate_stream(
+        self, messages: List[dict], **kwargs
+    ) -> AsyncIterator[str | dict]:
+        """Stream a response for the given messages.
+
+        Yields content string chunks as they arrive.  The final yield is a
+        usage sentinel dict ``{"__usage__": True, "input_tokens": N,
+        "output_tokens": N}`` so the caller can compute cost without a
+        separate round-trip.
+
+        The default implementation calls the synchronous ``generate()`` in a
+        thread and yields the full response as a single chunk.  Adapters that
+        support native upstream streaming (OpenAI, OpenRouter) override this.
+        """
+        content, usage = await asyncio.to_thread(self.generate, messages, **kwargs)
+        yield content
+        yield {
+            "__usage__": True,
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
+        }
 
 
 class MockProvider(ProviderAdapter):

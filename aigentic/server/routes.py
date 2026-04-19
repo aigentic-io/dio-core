@@ -7,9 +7,10 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from aigentic.core.fde import FederatedDecisionEngine
@@ -128,8 +129,74 @@ def list_providers(request: Request, _=Depends(_check_auth)):
     ]
 
 
-@router.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-def chat_completions(
+def _sse(chunk: dict) -> str:
+    """Serialize a chunk dict to a single SSE data line."""
+    return f"data: {json.dumps(chunk)}\n\n"
+
+
+async def _sse_generator(
+    stream_gen: AsyncIterator,
+    completion_id: str,
+    created: int,
+    model: str,
+    x_dio: dict,
+    provider_obj,
+) -> AsyncIterator[str]:
+    """Wrap adapter chunks in OpenAI-compatible SSE format.
+
+    Yields text/event-stream lines.  The final stop chunk carries x_dio so
+    clients get routing metadata without a separate request.  Usage (and
+    therefore cost) is derived from the ``__usage__`` sentinel emitted by
+    the adapter at the end of the stream.
+    """
+    usage = None
+    base = {"id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model}
+
+    # Opening delta establishes the assistant role (mirrors OpenAI behaviour)
+    yield _sse({**base, "choices": [{"index": 0,
+                                     "delta": {"role": "assistant", "content": ""},
+                                     "finish_reason": None}]})
+
+    try:
+        async for item in stream_gen:
+            if isinstance(item, dict) and item.get("__usage__"):
+                usage = item
+                continue
+            yield _sse({**base, "choices": [{"index": 0,
+                                             "delta": {"content": item},
+                                             "finish_reason": None}]})
+    except Exception as exc:
+        # Provider call failed after headers were already sent — emit a clean
+        # error event so the client gets a proper SSE close instead of a dirty
+        # TCP disconnect (curl: (18) transfer closed).
+        logger.error(json.dumps({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": "stream_error",
+            "completion_id": completion_id,
+            "provider": x_dio.get("provider"),
+            "error": str(exc),
+        }))
+        yield _sse({**base,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                    "x_dio": {**x_dio, "error": str(exc)}})
+        yield "data: [DONE]\n\n"
+        return
+
+    # Compute cost now that we have real token counts (or leave null if not reported)
+    if usage:
+        x_dio["cost"] = provider_obj.cost_breakdown(
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+        )
+
+    yield _sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "x_dio": x_dio})
+    yield "data: [DONE]\n\n"
+
+
+@router.post("/v1/chat/completions")
+async def chat_completions(
     req: ChatCompletionRequest,
     request: Request,
     response: Response,
@@ -194,6 +261,54 @@ def chat_completions(
     routing_text = _extract_text(req.messages)
     messages_dicts = _messages_to_dicts(req.messages)
 
+    # ── Streaming path ────────────────────────────────────────────────────────
+    if req.stream:
+        try:
+            provider_name, routing_meta, stream_gen = dio.route_stream(
+                routing_text, messages=messages_dicts, **fde_kwargs
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "No provider could fulfil the request", "reason": str(exc)},
+            ) from exc
+
+        has_pii = PIIDetector.has_pii(routing_text)
+        x_dio: dict = {
+            "provider": provider_name,
+            "routed_by": "fde",
+            "score": routing_meta.get("score"),
+            "reason": routing_meta.get("reason"),
+            "routing_mode": routing_meta.get("routing_mode"),
+        }
+        if has_pii:
+            x_dio["pii_detected"] = True
+            x_dio["reason"] = "PII detected — routed to privacy provider (never sent to cloud)"
+
+        provider_obj = dio.providers[provider_name]
+        model_name = provider_obj.model or provider_name
+        completion_id = f"chatcmpl-{request_id}"
+
+        sse_resp = StreamingResponse(
+            _sse_generator(
+                stream_gen,
+                completion_id=completion_id,
+                created=int(time.time()),
+                model=model_name,
+                x_dio=x_dio,
+                provider_obj=provider_obj,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "X-Request-ID": request_id,
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        return sse_resp
+
+    # ── Non-streaming path ────────────────────────────────────────────────────
+    # TODO: wrap in asyncio.to_thread() to avoid blocking the event loop
     try:
         result = dio.route(routing_text, messages=messages_dicts, **fde_kwargs)
     except Exception as exc:
@@ -263,6 +378,7 @@ def chat_completions(
         output_tokens=usage["output_tokens"],
         cache_read_tokens=usage.get("cache_read_tokens", 0),
     )
+
 
     # ── Telemetry: NDJSON to stdout ───────────────────────────────────────────
     logger.info(json.dumps({
@@ -343,11 +459,7 @@ def shadow_ingest(
     top_score = all_scores[0] if all_scores else None
 
     if top_score is None:
-        return Response(
-            content=json.dumps({"accepted": True, "record_id": None, "detail": "no eligible provider"}),
-            status_code=202,
-            media_type="application/json",
-        )
+        return {"accepted": True, "record_id": None, "detail": "no eligible provider"}
 
     provider = dio.providers[top_score.provider_name]
     dio_model = provider.model or top_score.provider_name
@@ -369,7 +481,7 @@ def shadow_ingest(
                 10,
             )
         else:
-            original_cost_usd = None  # model not in registry — saving fields will be null
+            original_cost_usd = 0.0
 
     record = build_shadow_record(
         request_id=request_id,

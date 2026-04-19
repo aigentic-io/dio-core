@@ -1,10 +1,18 @@
-"""OpenRouter passthrough adapter — forwards to openrouter.ai with exact token counts."""
+"""OpenRouter passthrough adapter — forwards to openrouter.ai with exact token counts.
+
+OpenRouter is an OpenAI-compatible gateway in front of ~300 models (Claude, Gemini,
+Llama, Mistral, Command-R, …).  By pointing AsyncOpenAI at openrouter.ai we get
+native streaming for every one of those models in a single implementation.
+"""
 
 import json
 import urllib.request
-from typing import Dict, List, Tuple
+from typing import AsyncIterator, Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
+
+_OR_BASE = "https://openrouter.ai/api/v1"
+_OR_HEADERS = {"HTTP-Referer": "https://ai-gentic.io", "X-Title": "DIO"}
 
 
 class OpenRouterProvider(ProviderAdapter):
@@ -24,7 +32,7 @@ class OpenRouterProvider(ProviderAdapter):
         dio.add_provider(p, adapter=adapter)
     """
 
-    BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+    BASE_URL = f"{_OR_BASE}/chat/completions"
 
     def __init__(self, provider: Provider, api_key: str, timeout: int = 60):
         """Initialize OpenRouterProvider.
@@ -37,6 +45,28 @@ class OpenRouterProvider(ProviderAdapter):
         super().__init__(provider)
         self.api_key = api_key
         self.timeout = timeout
+        self._async_client = None
+
+    @property
+    def async_client(self):
+        """Lazy-load AsyncOpenAI pointed at openrouter.ai.
+
+        OpenRouter is OpenAI-compatible, so AsyncOpenAI handles the SSE
+        protocol for all ~300 upstream models transparently.
+        """
+        if self._async_client is None:
+            try:
+                from openai import AsyncOpenAI
+                self._async_client = AsyncOpenAI(
+                    api_key=self.api_key,
+                    base_url=_OR_BASE,
+                    default_headers=_OR_HEADERS,
+                )
+            except ImportError:
+                raise ImportError(
+                    "OpenAI package not found. Install with: pip install openai"
+                )
+        return self._async_client
 
     def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
         """Forward a chat completion request to OpenRouter.
@@ -84,3 +114,34 @@ class OpenRouterProvider(ProviderAdapter):
                 "output_tokens": usage.get("completion_tokens", 0),
             },
         )
+
+    async def generate_stream(
+        self, messages: List[dict], **kwargs
+    ) -> AsyncIterator[str | dict]:
+        """Stream via OpenRouter with stream=True.
+
+        OpenRouter's OpenAI-compatible SSE works for all upstream models
+        (Claude, Gemini, Llama, …) — no per-model streaming code needed.
+        """
+        model = kwargs.get("model") or self.provider.model
+        if not model:
+            raise ValueError(
+                "model must be specified via Provider(model=...) or kwargs['model']"
+            )
+        stream = await self.async_client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=kwargs.get("temperature", 0.7),
+            max_tokens=kwargs.get("max_tokens", 1000),
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+            if chunk.usage:
+                yield {
+                    "__usage__": True,
+                    "input_tokens": chunk.usage.prompt_tokens,
+                    "output_tokens": chunk.usage.completion_tokens,
+                }

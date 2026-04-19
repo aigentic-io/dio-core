@@ -18,3 +18,4 @@ aigentic/docs/INTERNAL.md
 .DS_Store
 .claude/
 CLAUDE.md
+test_streaming.sh
