@@ -122,7 +122,7 @@ def _build_dio() -> DIO:
                 from aigentic.providers.claude import ClaudeProvider
                 p = Provider(
                     name="claude-haiku", type="cloud",
-                    model="claude-3-5-haiku-20241022",
+                    model="claude-haiku-4-5-20251001",
                 )
                 dio.add_provider(p, adapter=ClaudeProvider(p, api_key=anthropic_key))
             except Exception as e:
