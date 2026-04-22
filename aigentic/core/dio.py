@@ -1,6 +1,6 @@
 """Main DIO (Distributed Intelligence Orchestration) class."""
 
-from typing import Callable, Dict, List, Optional, Type
+from typing import AsyncIterator, Callable, Dict, List, Optional, Tuple, Type
 
 from aigentic.core.fde import FederatedDecisionEngine
 from aigentic.core.provider import MockProvider, Provider, ProviderAdapter
@@ -119,6 +119,91 @@ class DIO:
             "fallback": fallback.name,
             "trigger": trigger,
         }
+
+    def route_stream(
+        self,
+        prompt: str,
+        messages: Optional[List[dict]] = None,
+        **kwargs,
+    ) -> Tuple[str, dict, AsyncIterator[str | dict]]:
+        """Select a provider via FDE and return a streaming generator.
+
+        FDE scoring is synchronous (CPU-only, no I/O).  The caller is
+        responsible for iterating the returned async generator inside an
+        async context (e.g. FastAPI StreamingResponse).
+
+        Returns:
+            (provider_name, routing_metadata, stream_gen)
+            stream_gen yields content str chunks followed by a final
+            ``{"__usage__": True, "input_tokens": N, "output_tokens": N}``
+            sentinel that the caller can use to compute cost.
+        """
+        msgs: List[dict] = messages if messages is not None else [
+            {"role": "user", "content": prompt}
+        ]
+        _routing_keys = {"max_cost", "max_latency_ms", "require_local"}
+        adapter_kwargs = {k: v for k, v in kwargs.items() if k not in _routing_keys}
+
+        if self.use_fde:
+            all_scores = self.fde.score_all(self.providers, prompt, **kwargs)
+            if not all_scores:
+                raise ValueError("No eligible provider found for this request")
+            best = all_scores[0]
+            metadata = {
+                "routing_mode": "fde",
+                "score": best.score,
+                "privacy_score": best.privacy_score,
+                "cost_score": best.cost_score,
+                "capability_score": best.capability_score,
+                "latency_score": best.latency_score,
+                "estimated_cost": best.estimated_cost,
+                "reason": best.reason,
+            }
+
+            # Build a generator that mirrors the non-streaming fallback loop:
+            # try providers in score order; if one fails before yielding any
+            # content, transparently move on to the next.  x_dio reflects the
+            # FDE top-choice regardless of which provider ultimately serves.
+            candidates = [
+                (s.provider_name, self.adapters[s.provider_name])
+                for s in all_scores
+            ]
+
+            async def _with_fallback():
+                errors = []
+                for provider_name, adapter in candidates:
+                    gen = adapter.generate_stream(msgs, **adapter_kwargs)
+                    try:
+                        first = await anext(gen)
+                    except StopAsyncIteration:
+                        return
+                    except Exception as exc:
+                        errors.append(f"{provider_name}: {exc}")
+                        continue
+                    # First item received — commit to this provider
+                    yield first
+                    async for item in gen:
+                        yield item
+                    return
+                # Every candidate failed before producing any output
+                raise RuntimeError(
+                    f"All {len(candidates)} eligible provider(s) failed. "
+                    f"First error: {errors[0] if errors else 'unknown'}"
+                )
+
+            return best.provider_name, metadata, _with_fallback()
+        else:
+            provider_name = self.router.route(prompt)
+            if provider_name is None:
+                raise ValueError("No suitable provider found for this request")
+            metadata = {
+                "routing_mode": "policy",
+                "classification": self.router.classification,
+            }
+            stream_gen = self.adapters[provider_name].generate_stream(
+                msgs, **adapter_kwargs
+            )
+            return provider_name, metadata, stream_gen
 
     def route(
         self,

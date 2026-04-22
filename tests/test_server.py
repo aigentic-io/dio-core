@@ -4,6 +4,7 @@ Run: pytest tests/test_server.py -v
 Requires: pip install -e ".[dev,server]"
 """
 
+import json
 import warnings
 
 import pytest
@@ -328,5 +329,199 @@ def test_shadow_ingest_request_id_header(client):
         headers={"X-Request-ID": "trace-abc-123"},
     )
     assert r.status_code == 202
+
+
+# ── /v1/chat/completions — streaming (SSE) ───────────────────────────────────
+
+def _parse_sse(text: str) -> list:
+    """Return parsed JSON objects from SSE lines, skipping [DONE]."""
+    chunks = []
+    for line in text.splitlines():
+        if line.startswith("data: ") and "[DONE]" not in line:
+            chunks.append(json.loads(line[6:]))
+    return chunks
+
+
+def test_stream_status_and_content_type(client):
+    """stream:true must return 200 with text/event-stream content-type."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+    assert r.status_code == 200
+    assert r.headers.get("content-type", "").startswith("text/event-stream")
+
+
+def test_stream_ends_with_done(client):
+    """SSE body must terminate with data: [DONE]."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+    assert "data: [DONE]" in r.text
+
+
+def test_stream_chunk_format(client):
+    """Every SSE chunk must follow the OpenAI chat.completion.chunk schema."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+    chunks = _parse_sse(r.text)
+    assert len(chunks) >= 2  # at minimum: opening role delta + stop chunk
+    for chunk in chunks:
+        assert chunk["object"] == "chat.completion.chunk"
+        assert chunk["id"].startswith("chatcmpl-")
+        assert "choices" in chunk
+        assert chunk["choices"][0]["index"] == 0
+        assert "delta" in chunk["choices"][0]
+
+
+def test_stream_opening_role_delta(client):
+    """First chunk must establish the assistant role (delta.role == 'assistant')."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+    first = _parse_sse(r.text)[0]
+    assert first["choices"][0]["delta"].get("role") == "assistant"
+
+
+def test_stream_stop_chunk_has_x_dio(client):
+    """Final chunk (finish_reason=stop) must carry x_dio routing metadata."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+    chunks = _parse_sse(r.text)
+    stop = next(c for c in chunks if c["choices"][0].get("finish_reason") == "stop")
+    x_dio = stop.get("x_dio")
+    assert x_dio is not None
+    assert x_dio["provider"] in ("local-mock", "cloud-mock")
+    assert x_dio["routed_by"] == "fde"
+    assert "score" in x_dio
+
+
+def test_stream_cost_in_x_dio(client):
+    """x_dio.cost must be populated from the __usage__ sentinel."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+    chunks = _parse_sse(r.text)
+    stop = next(c for c in chunks if c["choices"][0].get("finish_reason") == "stop")
+    cost = stop["x_dio"].get("cost")
+    assert cost is not None
+    assert "total_usd" in cost
+
+
+def test_stream_request_id_echoed(client):
+    """X-Request-ID must be echoed in the streaming response headers."""
+    r = client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "Hello"}], "stream": True},
+        headers={"X-Request-ID": "stream-trace-xyz"},
+    )
+    assert r.headers.get("x-request-id") == "stream-trace-xyz"
+
+
+def test_stream_pii_routes_local(client):
+    """PII content must route to privacy provider even in streaming mode."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "My SSN is 123-45-6789"}],
+        "stream": True,
+    })
+    assert r.status_code == 200
+    chunks = _parse_sse(r.text)
+    stop = next(c for c in chunks if c["choices"][0].get("finish_reason") == "stop")
+    assert stop["x_dio"]["provider"] == "local-mock"
+    assert stop["x_dio"].get("pii_detected") is True
+
+
+def test_stream_false_returns_json(client):
+    """stream:false (default) must still return regular JSON, not SSE."""
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": False,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["object"] == "chat.completion"  # not chat.completion.chunk
+
+
+def test_stream_fallback_on_provider_failure(client):
+    """When the top-scored provider fails before yielding any content, streaming
+    must silently fall back to the next eligible provider and complete normally."""
+    from aigentic.core.provider import ProviderAdapter
+
+    class FailingAdapter(ProviderAdapter):
+        def generate(self, messages, **kwargs):
+            raise ConnectionRefusedError("provider unreachable")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        # Two providers: failing local (scores highest for simple queries) +
+        # working cloud fallback.
+        dio = DIO(
+            use_fde=True,
+            fde_weights={"privacy": 0.40, "cost": 0.20, "capability": 0.30, "latency": 0.10},
+            privacy_providers=["fail-local"],
+        )
+        fail_p = Provider(name="fail-local", type="local",
+                          model="fail-model", capability=0.4, latency_ms=50)
+        dio.add_provider(fail_p, adapter=FailingAdapter(fail_p))
+        ok_p = Provider(name="ok-cloud", type="cloud",
+                        cost_per_million_input_token=3.0,
+                        cost_per_million_output_token=3.0,
+                        model="ok-model", capability=0.9)
+        dio.add_provider(ok_p)   # MockProvider default
+    app.state.dio = dio
+
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+
+    assert r.status_code == 200
+    assert "data: [DONE]" in r.text
+    chunks = _parse_sse(r.text)
+    # Must complete normally via the fallback — no error finish_reason
+    stop = next(c for c in chunks if c["choices"][0].get("finish_reason") == "stop")
+    assert stop is not None
+
+
+def test_stream_all_providers_fail_clean_close(client):
+    """When every eligible provider fails, must still emit a clean error event
+    rather than a dirty TCP disconnect."""
+    from aigentic.core.provider import ProviderAdapter
+
+    class FailingAdapter(ProviderAdapter):
+        def generate(self, messages, **kwargs):
+            raise ConnectionRefusedError("provider unreachable")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        dio = DIO(
+            use_fde=True,
+            fde_weights={"privacy": 0.40, "cost": 0.20, "capability": 0.30, "latency": 0.10},
+            privacy_providers=["fail-local"],
+        )
+        p = Provider(name="fail-local", type="local",
+                     model="fail-model", capability=0.4, latency_ms=50)
+        dio.add_provider(p, adapter=FailingAdapter(p))
+    app.state.dio = dio
+
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+        "client_context": {"connectivity": "offline"},
+    })
+
+    assert r.status_code == 200
+    assert "data: [DONE]" in r.text
+    chunks = _parse_sse(r.text)
+    error_chunk = next(c for c in chunks if c["choices"][0].get("finish_reason") == "error")
+    assert "error" in error_chunk["x_dio"]
+    assert "unreachable" in error_chunk["x_dio"]["error"]
 
 
