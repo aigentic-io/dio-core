@@ -1,6 +1,6 @@
 """Google Gemini provider adapter for cloud inference."""
 
-from typing import Dict, List, Tuple
+from typing import AsyncIterator, Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
@@ -94,3 +94,44 @@ class GeminiProvider(ProviderAdapter):
                 "output_tokens": usage.candidates_token_count if usage else 0,
             },
         )
+
+    async def generate_stream(self, messages: List[dict], **kwargs) -> AsyncIterator:
+        """Stream a response using Gemini's native streaming API."""
+        from google.genai import types
+
+        system_instruction = None
+        contents = []
+        for m in messages:
+            if m["role"] == "system":
+                system_instruction = m["content"]
+            else:
+                role = "model" if m["role"] == "assistant" else "user"
+                contents.append(
+                    types.Content(role=role, parts=[types.Part(text=m["content"])])
+                )
+
+        config_kwargs = dict(
+            temperature=kwargs.get("temperature", self.temperature),
+            max_output_tokens=kwargs.get("max_tokens", 1000),
+        )
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        usage = None
+        stream = await self.client.aio.models.generate_content_stream(
+            model=self.model_name,
+            contents=contents,
+            config=config,
+        )
+        async for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+            if chunk.usage_metadata:
+                usage = chunk.usage_metadata
+
+        yield {
+            "__usage__": True,
+            "input_tokens": usage.prompt_token_count if usage else 0,
+            "output_tokens": usage.candidates_token_count if usage else 0,
+        }

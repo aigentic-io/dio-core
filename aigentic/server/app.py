@@ -25,7 +25,6 @@ Request headers (consumed server-side, not in the request body):
 """
 
 import asyncio
-import json
 import logging
 import os
 import threading
@@ -47,6 +46,7 @@ except ImportError as exc:
 
 import aigentic.registry.client as _registry_client
 from aigentic.core import DIO, Provider
+from aigentic.logging import log_event
 from aigentic.registry import sync_registry
 from aigentic.server.shadow import ShadowWriter
 
@@ -114,7 +114,7 @@ def _build_dio() -> DIO:
                 )
                 dio.add_provider(p, adapter=OpenAIProvider(p, api_key=openai_key))
             except Exception as e:
-                logger.warning(json.dumps({"event": "provider_skipped", "provider": "gpt-4o", "reason": str(e)}))
+                log_event(logger, "warning", "provider_skipped", provider="gpt-4o", reason=str(e))
 
         anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         if anthropic_key:
@@ -122,11 +122,11 @@ def _build_dio() -> DIO:
                 from aigentic.providers.claude import ClaudeProvider
                 p = Provider(
                     name="claude-haiku", type="cloud",
-                    model="claude-3-5-haiku-20241022",
+                    model="claude-haiku-4-5-20251001",
                 )
                 dio.add_provider(p, adapter=ClaudeProvider(p, api_key=anthropic_key))
             except Exception as e:
-                logger.warning(json.dumps({"event": "provider_skipped", "provider": "claude-haiku", "reason": str(e)}))
+                log_event(logger, "warning", "provider_skipped", provider="claude-haiku", reason=str(e))
 
         google_key = os.getenv("GOOGLE_API_KEY")
         if google_key:
@@ -138,7 +138,7 @@ def _build_dio() -> DIO:
                 )
                 dio.add_provider(p, adapter=GeminiProvider(p, api_key=google_key))
             except Exception as e:
-                logger.warning(json.dumps({"event": "provider_skipped", "provider": "gemini-flash", "reason": str(e)}))
+                log_event(logger, "warning", "provider_skipped", provider="gemini-flash", reason=str(e))
 
         ollama_url = os.getenv("OLLAMA_BASE_URL")
         if ollama_url:
@@ -151,7 +151,7 @@ def _build_dio() -> DIO:
                 )
                 dio.add_provider(p, adapter=WebhostProvider(p, base_url=ollama_url))
             except Exception as e:
-                logger.warning(json.dumps({"event": "provider_skipped", "provider": "ollama-local", "reason": str(e)}))
+                log_event(logger, "warning", "provider_skipped", provider="ollama-local", reason=str(e))
 
         openrouter_key = os.getenv("OPENROUTER_API_KEY")
         if openrouter_key:
@@ -163,7 +163,7 @@ def _build_dio() -> DIO:
                 )
                 dio.add_provider(p, adapter=OpenRouterProvider(p, api_key=openrouter_key))
             except Exception as e:
-                logger.warning(json.dumps({"event": "provider_skipped", "provider": "openrouter", "reason": str(e)}))
+                log_event(logger, "warning", "provider_skipped", provider="openrouter", reason=str(e))
 
     return dio
 

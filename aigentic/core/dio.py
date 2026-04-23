@@ -1,12 +1,16 @@
 """Main DIO (Distributed Intelligence Orchestration) class."""
 
+import logging
 from typing import AsyncIterator, Callable, Dict, List, Optional, Tuple, Type
 
 from aigentic.core.fde import FederatedDecisionEngine
 from aigentic.core.provider import MockProvider, Provider, ProviderAdapter
 from aigentic.core.response import Response
 from aigentic.core.router import Policy, Router
+from aigentic.logging import log_event
 from aigentic.registry import start as _registry_start
+
+logger = logging.getLogger("dio.fde")
 
 
 class DIO:
@@ -178,9 +182,17 @@ class DIO:
                     except StopAsyncIteration:
                         return
                     except Exception as exc:
+                        log_event(logger, "warning", "stream_provider_failed",
+                                  provider=provider_name,
+                                  error_type=type(exc).__name__,
+                                  error=str(exc))
                         errors.append(f"{provider_name}: {exc}")
                         continue
-                    # First item received — commit to this provider
+                    # First item received — commit to this provider.
+                    # Emit a sentinel so _sse_generator can update x_dio.provider
+                    # to reflect the actual serving provider (may differ from the
+                    # FDE top pick when fallback is triggered).
+                    yield {"__provider__": provider_name}
                     yield first
                     async for item in gen:
                         yield item

@@ -488,6 +488,107 @@ def test_stream_fallback_on_provider_failure(client):
     # Must complete normally via the fallback — no error finish_reason
     stop = next(c for c in chunks if c["choices"][0].get("finish_reason") == "stop")
     assert stop is not None
+    # x_dio.provider must reflect the actual serving provider, not the FDE top pick
+    assert stop["x_dio"]["provider"] == "ok-cloud"
+
+
+def test_stream_fallback_cost_uses_actual_provider_rates(client):
+    """Cost in x_dio must be computed at the actual serving provider's rates,
+    not the FDE top pick's rates, when fallback fires."""
+    from aigentic.core.provider import ProviderAdapter
+
+    class FailingAdapter(ProviderAdapter):
+        def generate(self, messages, **kwargs):
+            raise ConnectionRefusedError("provider unreachable")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        dio = DIO(
+            use_fde=True,
+            fde_weights={"privacy": 0.40, "cost": 0.20, "capability": 0.30, "latency": 0.10},
+            privacy_providers=["fail-local"],
+        )
+        # Failing local provider — cost 0 (on-device stub)
+        fail_p = Provider(name="fail-local", type="local",
+                          model="fail-model", capability=0.4, latency_ms=50)
+        dio.add_provider(fail_p, adapter=FailingAdapter(fail_p))
+        # Working cloud provider — non-zero pricing
+        ok_p = Provider(name="ok-cloud", type="cloud",
+                        cost_per_million_input_token=5.0,
+                        cost_per_million_output_token=15.0,
+                        model="ok-model", capability=0.9)
+        dio.add_provider(ok_p)  # MockProvider returns 10 input + 10 output tokens
+    app.state.dio = dio
+
+    r = client.post("/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Hello"}],
+        "stream": True,
+    })
+
+    chunks = _parse_sse(r.text)
+    stop = next(c for c in chunks if c["choices"][0].get("finish_reason") == "stop")
+    cost = stop["x_dio"]["cost"]
+    # MockProvider yields 10 input + 10 output tokens at ok-cloud rates:
+    # (10 * 5.0 + 10 * 15.0) / 1_000_000 = 0.0002
+    # If cost were computed at fail-local rates (cost=0) this would be 0.0
+    assert cost["total_usd"] > 0, "cost must use actual provider rates, not the failed provider's"
+    assert stop["x_dio"]["provider"] == "ok-cloud"
+
+
+def test_stream_fallback_logs_provider_failure(client):
+    """Provider failure during streaming fallback must emit a WARNING to dio.fde
+    with structured fields for production debugging.
+
+    Setup: failing cloud provider scores highest (FDE prefers high-capability cloud
+    for moderate queries), working local provider is the fallback.
+    """
+    from unittest.mock import patch
+
+    from aigentic.core.provider import ProviderAdapter
+
+    class FailingAdapter(ProviderAdapter):
+        def generate(self, messages, **kwargs):
+            raise ConnectionRefusedError("provider unreachable")
+
+        async def generate_stream(self, messages, **kwargs):
+            # Raise before yielding so the exception propagates from anext()
+            # without going through asyncio.to_thread (which runs in a thread
+            # outside the mock context in tests).
+            raise ConnectionRefusedError("provider unreachable")
+            yield  # makes this an async generator
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        dio = DIO(
+            use_fde=True,
+            fde_weights={"privacy": 0.40, "cost": 0.20, "capability": 0.30, "latency": 0.10},
+            privacy_providers=["ok-local"],
+        )
+        # Failing cloud provider — FDE scores this highest for a moderate query
+        # due to high capability (0.9) and decent cost.
+        fail_p = Provider(name="fail-cloud", type="cloud",
+                          cost_per_million_input_token=1.0,
+                          cost_per_million_output_token=1.0,
+                          model="fail-model", capability=0.9)
+        dio.add_provider(fail_p, adapter=FailingAdapter(fail_p))
+        # Working local provider — lower score, serves as fallback.
+        ok_p = Provider(name="ok-local", type="local",
+                        model="ok-model", capability=0.4, latency_ms=50)
+        dio.add_provider(ok_p)
+    app.state.dio = dio
+
+    with patch("aigentic.core.dio.logger") as mock_logger:
+        client.post("/v1/chat/completions", json={
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": True,
+        })
+
+    mock_logger.warning.assert_called_once()
+    record = json.loads(mock_logger.warning.call_args[0][0])
+    assert record["event"] == "stream_provider_failed"
+    assert record["provider"] == "fail-cloud"
+    assert record["error_type"] == "ConnectionRefusedError"
+    assert "unreachable" in record["error"]
 
 
 def test_stream_all_providers_fail_clean_close(client):

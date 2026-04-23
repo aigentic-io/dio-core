@@ -6,7 +6,6 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -15,6 +14,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from aigentic.core.fde import FederatedDecisionEngine
 from aigentic.core.pii_detector import PIIDetector
+from aigentic.logging import log_event
 from aigentic.server.device_context import to_fde_kwargs
 from aigentic.server.models import (
     ChatCompletionChoice,
@@ -140,7 +140,8 @@ async def _sse_generator(
     created: int,
     model: str,
     x_dio: dict,
-    provider_obj,
+    actual_provider,
+    providers: dict = None,
 ) -> AsyncIterator[str]:
     """Wrap adapter chunks in OpenAI-compatible SSE format.
 
@@ -160,6 +161,14 @@ async def _sse_generator(
 
     try:
         async for item in stream_gen:
+            if isinstance(item, dict) and item.get("__provider__"):
+                # Fallback fired — update x_dio and cost calculator to reflect
+                # the provider that actually served, not the FDE top pick.
+                actual_name = item["__provider__"]
+                x_dio["provider"] = actual_name
+                if providers and actual_name in providers:
+                    actual_provider = providers[actual_name]
+                continue
             if isinstance(item, dict) and item.get("__usage__"):
                 usage = item
                 continue
@@ -170,13 +179,10 @@ async def _sse_generator(
         # Provider call failed after headers were already sent — emit a clean
         # error event so the client gets a proper SSE close instead of a dirty
         # TCP disconnect (curl: (18) transfer closed).
-        logger.error(json.dumps({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "event": "stream_error",
-            "completion_id": completion_id,
-            "provider": x_dio.get("provider"),
-            "error": str(exc),
-        }))
+        log_event(logger, "error", "stream_error",
+                  completion_id=completion_id,
+                  provider=x_dio.get("provider"),
+                  error=str(exc))
         yield _sse({**base,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
                     "x_dio": {**x_dio, "error": str(exc)}})
@@ -185,7 +191,7 @@ async def _sse_generator(
 
     # Compute cost now that we have real token counts (or leave null if not reported)
     if usage:
-        x_dio["cost"] = provider_obj.cost_breakdown(
+        x_dio["cost"] = actual_provider.cost_breakdown(
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
         )
@@ -296,7 +302,8 @@ async def chat_completions(
                 created=int(time.time()),
                 model=model_name,
                 x_dio=x_dio,
-                provider_obj=provider_obj,
+                actual_provider=provider_obj,
+                providers=dio.providers,
             ),
             media_type="text/event-stream",
             headers={
@@ -313,15 +320,13 @@ async def chat_completions(
         result = dio.route(routing_text, messages=messages_dicts, **fde_kwargs)
     except Exception as exc:
         wall_ms = int((time.monotonic() - t0) * 1000)
-        logger.error(json.dumps({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "request_id": request_id,
-            "session_id": session_id,
-            "user_id": user_id,
-            "error": str(exc),
-            "fde_kwargs": {k: v for k, v in fde_kwargs.items()},
-            "wall_ms": wall_ms,
-        }))
+        log_event(logger, "error", "request_error",
+                  request_id=request_id,
+                  session_id=session_id,
+                  user_id=user_id,
+                  error=str(exc),
+                  fde_kwargs={k: v for k, v in fde_kwargs.items()},
+                  wall_ms=wall_ms)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error": "No provider could fulfil the request", "reason": str(exc)},
@@ -381,26 +386,24 @@ async def chat_completions(
 
 
     # ── Telemetry: NDJSON to stdout ───────────────────────────────────────────
-    logger.info(json.dumps({
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "request_id": request_id,
-        "session_id": session_id,
-        "user_id": user_id,
-        "accept_language": accept_language,
-        "platform": req.client_context.platform if req.client_context else None,
-        "provider": result.provider,
-        "model": dio.providers[result.provider].model,
-        "scores": {
-            k: result.metadata.get(f"{k}_score")
-            for k in ("privacy", "cost", "capability", "latency")
-        },
-        "has_pii": has_pii,
-        "complexity": complexity.value,
-        "input_tokens": usage["input_tokens"],
-        "output_tokens": usage["output_tokens"],
-        "cost_usd": x_dio["cost"]["total_usd"],
-        "wall_ms": wall_ms,
-    }))
+    log_event(logger, "info", "request_complete",
+              request_id=request_id,
+              session_id=session_id,
+              user_id=user_id,
+              accept_language=accept_language,
+              platform=req.client_context.platform if req.client_context else None,
+              provider=result.provider,
+              model=dio.providers[result.provider].model,
+              scores={
+                  k: result.metadata.get(f"{k}_score")
+                  for k in ("privacy", "cost", "capability", "latency")
+              },
+              has_pii=has_pii,
+              complexity=complexity.value,
+              input_tokens=usage["input_tokens"],
+              output_tokens=usage["output_tokens"],
+              cost_usd=x_dio["cost"]["total_usd"],
+              wall_ms=wall_ms)
 
     return ChatCompletionResponse(
         id=f"chatcmpl-{request_id}",
