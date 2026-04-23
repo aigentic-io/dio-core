@@ -140,7 +140,8 @@ async def _sse_generator(
     created: int,
     model: str,
     x_dio: dict,
-    provider_obj,
+    actual_provider,
+    providers: dict = None,
 ) -> AsyncIterator[str]:
     """Wrap adapter chunks in OpenAI-compatible SSE format.
 
@@ -160,6 +161,14 @@ async def _sse_generator(
 
     try:
         async for item in stream_gen:
+            if isinstance(item, dict) and item.get("__provider__"):
+                # Fallback fired — update x_dio and cost calculator to reflect
+                # the provider that actually served, not the FDE top pick.
+                actual_name = item["__provider__"]
+                x_dio["provider"] = actual_name
+                if providers and actual_name in providers:
+                    actual_provider = providers[actual_name]
+                continue
             if isinstance(item, dict) and item.get("__usage__"):
                 usage = item
                 continue
@@ -185,7 +194,7 @@ async def _sse_generator(
 
     # Compute cost now that we have real token counts (or leave null if not reported)
     if usage:
-        x_dio["cost"] = provider_obj.cost_breakdown(
+        x_dio["cost"] = actual_provider.cost_breakdown(
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],
         )
@@ -296,7 +305,8 @@ async def chat_completions(
                 created=int(time.time()),
                 model=model_name,
                 x_dio=x_dio,
-                provider_obj=provider_obj,
+                actual_provider=provider_obj,
+                providers=dio.providers,
             ),
             media_type="text/event-stream",
             headers={
