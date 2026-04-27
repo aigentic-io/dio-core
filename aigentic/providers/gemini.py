@@ -1,6 +1,6 @@
 """Google Gemini provider adapter for cloud inference."""
 
-from typing import Dict, List, Tuple
+from typing import AsyncIterator, Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
@@ -49,16 +49,11 @@ class GeminiProvider(ProviderAdapter):
                 )
         return self._client
 
-    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
-        """Generate a response using Gemini.
+    def _build_request(self, messages: List[dict], **kwargs):
+        """Build (contents, config) from OpenAI-format messages for Gemini API calls.
 
-        Args:
-            messages: Conversation turns in OpenAI format (system message extracted
-                      as system_instruction; user/assistant roles mapped to Gemini format)
-            **kwargs: Additional parameters (temperature, max_tokens, etc.)
-
-        Returns:
-            Tuple of (content, usage_dict) with exact token counts
+        Shared by generate() and generate_stream() to avoid duplicating message
+        mapping and config construction logic.
         """
         from google.genai import types
 
@@ -79,8 +74,20 @@ class GeminiProvider(ProviderAdapter):
         )
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
-        config = types.GenerateContentConfig(**config_kwargs)
+        return contents, types.GenerateContentConfig(**config_kwargs)
 
+    def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
+        """Generate a response using Gemini.
+
+        Args:
+            messages: Conversation turns in OpenAI format (system message extracted
+                      as system_instruction; user/assistant roles mapped to Gemini format)
+            **kwargs: Additional parameters (temperature, max_tokens, etc.)
+
+        Returns:
+            Tuple of (content, usage_dict) with exact token counts
+        """
+        contents, config = self._build_request(messages, **kwargs)
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=contents,
@@ -94,3 +101,25 @@ class GeminiProvider(ProviderAdapter):
                 "output_tokens": usage.candidates_token_count if usage else 0,
             },
         )
+
+    async def generate_stream(self, messages: List[dict], **kwargs) -> AsyncIterator:
+        """Stream a response using Gemini's native streaming API."""
+        contents, config = self._build_request(messages, **kwargs)
+
+        usage = None
+        stream = await self.client.aio.models.generate_content_stream(
+            model=self.model_name,
+            contents=contents,
+            config=config,
+        )
+        async for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+            if chunk.usage_metadata:
+                usage = chunk.usage_metadata
+
+        yield {
+            "__usage__": True,
+            "input_tokens": usage.prompt_token_count if usage else 0,
+            "output_tokens": usage.candidates_token_count if usage else 0,
+        }

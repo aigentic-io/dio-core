@@ -1,6 +1,6 @@
 """Anthropic Claude provider adapter for cloud inference."""
 
-from typing import Dict, List, Tuple
+from typing import AsyncIterator, Dict, List, Tuple
 
 from aigentic.core.provider import Provider, ProviderAdapter
 
@@ -37,10 +37,11 @@ class ClaudeProvider(ProviderAdapter):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = None
+        self._async_client = None
 
     @property
     def client(self):
-        """Lazy load Anthropic client."""
+        """Lazy load Anthropic sync client."""
         if self._client is None:
             try:
                 from anthropic import Anthropic
@@ -50,6 +51,19 @@ class ClaudeProvider(ProviderAdapter):
                     "Anthropic package not found. Install with: pip install anthropic"
                 )
         return self._client
+
+    @property
+    def async_client(self):
+        """Lazy load Anthropic async client."""
+        if self._async_client is None:
+            try:
+                from anthropic import AsyncAnthropic
+                self._async_client = AsyncAnthropic(api_key=self.api_key)
+            except ImportError:
+                raise ImportError(
+                    "Anthropic package not found. Install with: pip install anthropic"
+                )
+        return self._async_client
 
     def generate(self, messages: List[dict], **kwargs) -> Tuple[str, Dict[str, int]]:
         """Generate a response using Claude.
@@ -87,3 +101,32 @@ class ClaudeProvider(ProviderAdapter):
                 "output_tokens": response.usage.output_tokens,
             },
         )
+
+    async def generate_stream(self, messages: List[dict], **kwargs) -> AsyncIterator:
+        """Stream a response using Claude's native streaming API."""
+        system = None
+        chat_messages = []
+        for m in messages:
+            if m["role"] == "system":
+                system = m["content"]
+            else:
+                chat_messages.append(m)
+
+        create_kwargs = dict(
+            model=self.model,
+            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            temperature=kwargs.get("temperature", self.temperature),
+            messages=chat_messages,
+        )
+        if system:
+            create_kwargs["system"] = system
+
+        async with self.async_client.messages.stream(**create_kwargs) as stream:
+            async for text in stream.text_stream:
+                yield text
+            final = await stream.get_final_message()
+            yield {
+                "__usage__": True,
+                "input_tokens": final.usage.input_tokens,
+                "output_tokens": final.usage.output_tokens,
+            }
