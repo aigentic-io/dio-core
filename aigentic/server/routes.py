@@ -1,5 +1,6 @@
 """DIO API endpoint handlers."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -315,9 +316,10 @@ async def chat_completions(
         return sse_resp
 
     # ── Non-streaming path ────────────────────────────────────────────────────
-    # TODO: wrap in asyncio.to_thread() to avoid blocking the event loop
     try:
-        result = dio.route(routing_text, messages=messages_dicts, **fde_kwargs)
+        result = await asyncio.to_thread(
+            dio.route, routing_text, messages=messages_dicts, **fde_kwargs
+        )
     except Exception as exc:
         wall_ms = int((time.monotonic() - t0) * 1000)
         log_event(logger, "error", "request_error",
